@@ -1,0 +1,57 @@
+name: build
+
+# Weekly, which is what Scryfall suggests for rules data, and by hand after a set
+# release. Not daily: popularity ranks move every day, so a daily build would be a
+# new file every day and every phone would fetch it.
+on:
+  schedule:
+    - cron: "17 10 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # One release, replaced in place, so the app has one address to ask.
+      TAG: data
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test
+        run: python -m unittest -v
+
+      - name: Fetch the last published manifest
+        run: gh release download "$TAG" --pattern manifest.json --dir previous || true
+
+      - name: Build
+        run: python build.py --out dist --previous previous/manifest.json
+
+      - name: Publish, if anything changed
+        run: |
+          new=$(python -c "import json; print(json.load(open('dist/manifest.json'))['sha256'])")
+          old=$(python -c "import json; print(json.load(open('previous/manifest.json'))['sha256'])" 2>/dev/null || true)
+          if [ "$new" = "$old" ]; then
+            echo "Unchanged since the last build."
+            exit 0
+          fi
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Card data" --notes "The current card file. See README.md."
+          # The data first and the manifest last: the manifest is what a phone reads,
+          # and it must never name a file that is not there yet.
+          gh release upload "$TAG" dist/cauldron-cards-*.jsonl.gz
+          gh release upload "$TAG" dist/manifest.json --clobber
+          # Keep the file before this one, for a phone halfway through fetching it.
+          keep=$(python -c "import json; print(json.load(open('previous/manifest.json'))['file'])" 2>/dev/null || true)
+          current=$(basename dist/cauldron-cards-*.jsonl.gz)
+          gh release view "$TAG" --json assets --jq '.assets[].name' | while read -r name; do
+            case "$name" in
+              manifest.json|"$current"|"$keep") ;;
+              cauldron-cards-*) gh release delete-asset "$TAG" "$name" --yes ;;
+            esac
+          done
