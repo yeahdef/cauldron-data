@@ -269,6 +269,42 @@ class Price(unittest.TestCase):
         self.assertEqual((4.0, 4.0), (front["pr"], back["pr"]))
 
 
+class Folders(unittest.TestCase):
+
+    LISTED = [
+        {"code": "fin", "parent_set_code": None},
+        {"code": "fic", "parent_set_code": "fin"},
+        {"code": "pfin", "parent_set_code": "fin"},
+        {"code": "afic", "parent_set_code": "fic"},   # a scene box, filed under the commander set
+        {"code": "tfin", "parent_set_code": "fin"},   # tokens: no cards of ours in it
+        {"code": "lea", "parent_set_code": None},
+    ]
+
+    def filed(self, *codes, listed=None):
+        printings = [bolt(id="p-" + code, set=code, set_name=code.upper()) for code in codes]
+        built = build.build([bolt()], printings, self.LISTED if listed is None else listed)
+        return {row["c"]: row.get("p") for row in built["sets"]}
+
+    def test_a_set_is_filed_under_the_release_it_came_with(self):
+        self.assertEqual({"fin": None, "fic": "fin", "pfin": "fin", "lea": None}, self.filed("fin", "fic", "pfin", "lea"))
+
+    def test_the_folder_is_the_top_of_the_chain_not_the_next_link(self):
+        # The scene box belongs to the commander set, which belongs to the main set.
+        self.assertEqual("fin", self.filed("fin", "fic", "afic")["afic"])
+
+    def test_a_set_is_never_filed_under_one_that_is_not_in_the_list(self):
+        # No card of the main set, so nothing to open: the commander set stands alone,
+        # and the scene box goes under it, the highest ancestor that is there.
+        self.assertEqual({"fic": None, "afic": "fic"}, self.filed("fic", "afic"))
+
+    def test_without_the_list_of_sets_nothing_is_filed(self):
+        self.assertEqual({"fin": None, "fic": None}, self.filed("fin", "fic", listed=[]))
+
+    def test_sets_that_name_each_other_do_not_hang_the_build(self):
+        loop = [{"code": "aaa", "parent_set_code": "bbb"}, {"code": "bbb", "parent_set_code": "aaa"}]
+        self.assertEqual({"aaa": "bbb", "bbb": "aaa"}, self.filed("aaa", "bbb", listed=loop))
+
+
 class Guards(unittest.TestCase):
 
     def small(self):

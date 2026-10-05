@@ -2,7 +2,7 @@
 """Builds the card file the Cauldron app carries, from Scryfall's bulk data.
 
 Scryfall publishes every card as two files that matter here, about 100MB
-compressed between them. A phone needs a few megabytes of that: the words on each
+compressed between them, and a short list of its sets. A phone needs a few megabytes of that: the words on each
 card, one row per picture, and which sets each card was printed in. This reads the
 two and writes one small file plus a manifest describing it.
 
@@ -30,6 +30,10 @@ FORMAT = 1
 #: Scryfall refuses requests without a descriptive User-Agent.
 USER_AGENT = "cauldron-data/1.0 (https://github.com/yeahdef/cauldron-data)"
 BULK_INDEX = "https://api.scryfall.com/bulk-data"
+
+#: Every set, for the one thing a card does not say about its set: which set that
+#: set belongs to. Final Fantasy Commander is part of Final Fantasy.
+SETS_INDEX = "https://api.scryfall.com/sets"
 
 #: One row per card, for the rules; one row per printing, for pictures and sets.
 SOURCES = ("oracle_cards", "default_cards")
@@ -200,8 +204,32 @@ def _art_rank(printing):
     )
 
 
-def build(oracle_cards, default_cards):
-    """The four tables, from the two sources. Each source is any iterable of dicts."""
+def _folders(listed, kept):
+    """Set code -> the code of the set it is filed under, for sets that have one.
+
+    Scryfall gives each set a parent: a commander set's is the set it was released
+    with, a promo set's the same. Followed to the top, that is the release a player
+    would name: six sets are all "Final Fantasy". A set is filed under the HIGHEST
+    ancestor that is itself in [kept], because a folder nobody can open is no use,
+    and an ancestor with no cards in this file is not in the app's list at all.
+    """
+    parent = {s.get("code"): s.get("parent_set_code") for s in listed}
+    out = {}
+    for code in kept:
+        top, at, seen = None, parent.get(code), {code}
+        while at and at not in seen:
+            if at in kept:
+                top = at
+            seen.add(at)
+            at = parent.get(at)
+        if top:
+            out[code] = top
+    return out
+
+
+def build(oracle_cards, default_cards, set_list=()):
+    """The four tables. Each source is any iterable of dicts; [set_list] is Scryfall's list of sets."""
+    set_list = list(set_list)
     oracle_cards = [c for c in oracle_cards if is_card(c) and c.get("oracle_id")]
     # Sorted, so a build from unchanged data is byte for byte the same file and no
     # phone downloads it twice.
@@ -287,6 +315,9 @@ def build(oracle_cards, default_cards):
     for card, by_set in membership.items():
         for code, pictures in by_set.items():
             by_set[code] = {art_index[(card, p)] for p in pictures if (card, p) in art_index}
+    # Which release each set is part of. See [_folders].
+    for code, folder in _folders(set_list, sets).items():
+        sets[code]["p"] = folder
     printings = [
         {"k": card, "s": {code: sorted(pictures) for code, pictures in sorted(by_set.items())}}
         for card, by_set in sorted(membership.items())
@@ -338,6 +369,8 @@ def check(tables, previous=None, minimum=None):
         for canary in CANARIES:
             if canary not in named:
                 problems.append(f"missing {canary[0]} (face {canary[1]})")
+        if not any("p" in row for row in tables["sets"]):
+            problems.append("no set is filed under another: the list of sets did not arrive")
         pictured = {row["k"] for row in tables["art"]}
         bare = len(cards) - len(pictured)
         if bare > len(cards) * 0.005:
@@ -418,6 +451,17 @@ def download(cache_dir):
     return paths, stamps
 
 
+def download_sets():
+    """Scryfall's list of sets, fetched fresh: it is small, and it is not in the bulk files."""
+    listed, url = [], SETS_INDEX
+    while url:
+        with _get(url) as response:
+            page = json.load(response)
+        listed += page["data"]
+        url = page.get("next_page") if page.get("has_more") else None
+    return listed
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default="dist")
@@ -425,6 +469,7 @@ def main(argv=None):
     parser.add_argument("--previous", help="the last published manifest.json, to compare counts against")
     for source in SOURCES:
         parser.add_argument(f"--{source.replace('_', '-')}", help="a local .jsonl.gz to use instead of downloading")
+    parser.add_argument("--sets", help="a local copy of api.scryfall.com/sets to use instead of downloading")
     args = parser.parse_args(argv)
 
     local = {source: getattr(args, source) for source in SOURCES}
@@ -440,7 +485,13 @@ def main(argv=None):
         with open(args.previous, encoding="utf-8") as f:
             previous = json.load(f)
 
-    tables = build(*(read_jsonl(paths[source]) for source in SOURCES))
+    if args.sets:
+        with open(args.sets, encoding="utf-8") as f:
+            set_list = json.load(f)["data"]
+    else:
+        set_list = download_sets()
+
+    tables = build(*(read_jsonl(paths[source]) for source in SOURCES), set_list=set_list)
     try:
         check(tables, previous)
     except BuildError as error:

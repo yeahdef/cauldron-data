@@ -32,7 +32,10 @@ one that ended.
 Rows refer to each other by position: `k` is a row number in `cards`, and the
 numbers in `printings` are row numbers in `art`. Empty fields are left out.
 
-**sets**: `c` code, `n` name, `ty` set type, `d` release date.
+**sets**: `c` code, `n` name, `ty` set type, `d` release date, and `p`, the code of
+the set it is filed under where it has one: Final Fantasy Commander and Final
+Fantasy Promos are both filed under `fin`. Always the top of the chain, and always
+a set that is itself in this table.
 
 **cards**, one per printable face:
 
