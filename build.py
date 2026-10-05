@@ -50,6 +50,11 @@ NOT_CARD_TYPES = ("Card", "Token", "Dungeon", "Stickers")
 #: adventure, flip, prepare) has both on ONE side and stays whole.
 TWO_SIDED = {"transform", "modal_dfc"}
 
+#: Scryfall's rarities and the letter each is kept as, commonest first.
+RARITIES = (
+    ("c", "common"), ("u", "uncommon"), ("r", "rare"), ("m", "mythic"), ("s", "special"), ("b", "bonus"),
+)
+
 #: A picture Scryfall does not really have yet.
 NO_PICTURE = {"placeholder", "missing"}
 
@@ -211,6 +216,7 @@ def build(oracle_cards, default_cards):
     best = {}
     sets = {}
     membership = {}
+    rarities = {}
     for printing in default_cards:
         code = printing.get("set")
         if not code or printing.get("layout") == "art_series":
@@ -225,6 +231,7 @@ def build(oracle_cards, default_cards):
             # picture still has a name the app can remember it by.
             picture = _illustration(printing, source) or printing["id"]
             membership.setdefault(card, {}).setdefault(code, set()).add(picture)
+            rarities.setdefault(card, set()).add(printing.get("rarity"))
             if printing.get("image_status") in NO_PICTURE:
                 continue
             row = {"k": card, "i": printing["id"], "il": picture}
@@ -245,6 +252,11 @@ def build(oracle_cards, default_cards):
             released = printing.get("released_at")
             if released and released < known.get("d", "9999"):
                 known["d"] = released
+    # Rarity belongs to a PRINTING: Lightning Bolt has been common, uncommon and
+    # rare. A card carries every rarity it has ever been printed at, so "rare" finds
+    # every card that has been one.
+    for card, seen_at in rarities.items():
+        _put(cards[card], "ra", "".join(letter for letter, name in RARITIES if name in seen_at))
     art = [row for _, row in sorted(best.values(), key=lambda pair: (pair[1]["k"], pair[1]["i"], pair[1]["il"]))]
     art_index = {(row["k"], row["il"]): i for i, row in enumerate(art)}
     for card, by_set in membership.items():

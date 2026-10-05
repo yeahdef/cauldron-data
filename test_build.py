@@ -221,6 +221,30 @@ class Sets(unittest.TestCase):
         self.assertEqual(["lea"], [s["c"] for s in built["sets"]])
 
 
+class Rarity(unittest.TestCase):
+
+    def test_a_card_carries_every_rarity_it_has_been_printed_at(self):
+        built = tables([bolt()], [
+            bolt(id="p-alpha", rarity="common"),
+            bolt(id="p-jud", set="jud", set_name="Judge", rarity="rare"),
+            bolt(id="p-m10", set="m10", set_name="2010", rarity="common"),
+        ])
+        # Commonest first, each once, whatever order the printings came in.
+        self.assertEqual("cr", built["cards"][0]["ra"])
+
+    def test_both_sides_of_a_card_have_its_rarity(self):
+        front, back = tables([abbey()], [abbey(rarity="rare")])["cards"]
+        self.assertEqual(("r", "r"), (front["ra"], back["ra"]))
+
+    def test_a_printing_with_no_rarity_adds_nothing(self):
+        (row,) = tables([bolt()])["cards"]
+        self.assertNotIn("ra", row)
+
+    def test_the_odd_rarities_are_kept_too(self):
+        built = tables([bolt()], [bolt(id="p-a", rarity="mythic"), bolt(id="p-b", set="x", rarity="special"), bolt(id="p-c", set="y", rarity="bonus")])
+        self.assertEqual("msb", built["cards"][0]["ra"])
+
+
 class Guards(unittest.TestCase):
 
     def small(self):

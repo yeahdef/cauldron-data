@@ -46,6 +46,7 @@ numbers in `printings` are row numbers in `art`. Empty fields are left out.
 | `c` `ci` | colours and colour identity, as WUBRG letters |
 | `mv` | mana value |
 | `r` | EDHREC rank, lower is more played |
+| `ra` | every rarity the card has been printed at, as letters: `c` common, `u` uncommon, `r` rare, `m` mythic, `s` special, `b` bonus |
 | `y` | Scryfall layout |
 | `meld` | on a meld half: the oracle id of what it melds into |
 
