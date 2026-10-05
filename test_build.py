@@ -240,6 +240,24 @@ class Rarity(unittest.TestCase):
         (row,) = tables([bolt()])["cards"]
         self.assertNotIn("ra", row)
 
+    def test_a_painting_carries_the_rarities_it_was_printed_at(self):
+        built = tables([bolt()], [
+            bolt(id="p-alpha", rarity="common"),
+            bolt(id="p-beta", set="leb", rarity="uncommon"),                      # the same painting again
+            bolt(id="p-jud", set="jud", rarity="rare", illustration_id="ill-judge"),
+        ])
+        by_painting = {row["il"]: row.get("ra") for row in built["art"]}
+        # Each painting its own, and the card all of them.
+        self.assertEqual({"ill-Lightning Bolt": "cu", "ill-judge": "r"}, by_painting)
+        self.assertEqual("cur", built["cards"][0]["ra"])
+
+    def test_a_printing_with_no_picture_yet_still_counts_toward_its_paintings_rarity(self):
+        built = tables([bolt()], [
+            bolt(id="p-real", rarity="common"),
+            bolt(id="p-soon", set="new", rarity="mythic", image_status="placeholder"),
+        ])
+        self.assertEqual("cm", built["art"][0]["ra"])
+
     def test_the_odd_rarities_are_kept_too(self):
         built = tables([bolt()], [bolt(id="p-a", rarity="mythic"), bolt(id="p-b", set="x", rarity="special"), bolt(id="p-c", set="y", rarity="bonus")])
         self.assertEqual("msb", built["cards"][0]["ra"])

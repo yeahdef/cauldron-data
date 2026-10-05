@@ -262,6 +262,7 @@ def build(oracle_cards, default_cards, set_list=()):
     sets = {}
     membership = {}
     rarities = {}
+    painted_at = {}
     cheapest = {}
     for printing in default_cards:
         code = printing.get("set")
@@ -278,6 +279,9 @@ def build(oracle_cards, default_cards, set_list=()):
             picture = _illustration(printing, source) or printing["id"]
             membership.setdefault(card, {}).setdefault(code, set()).add(picture)
             rarities.setdefault(card, set()).add(printing.get("rarity"))
+            # And of the PAINTING, which is what is chosen between once a card is
+            # found: Sol Ring is every rarity, and each of its paintings only some.
+            painted_at.setdefault((card, picture), set()).add(printing.get("rarity"))
             price = _price(printing)
             if price is not None and price < cheapest.get(card, float("inf")):
                 cheapest[card] = price
@@ -310,6 +314,8 @@ def build(oracle_cards, default_cards, set_list=()):
     # the cheapest copy of it costs.
     for card, price in cheapest.items():
         cards[card]["pr"] = price
+    for (card, picture), (_, row) in best.items():
+        _put(row, "ra", "".join(letter for letter, name in RARITIES if name in painted_at.get((card, picture), ())))
     art = [row for _, row in sorted(best.values(), key=lambda pair: (pair[1]["k"], pair[1]["i"], pair[1]["il"]))]
     art_index = {(row["k"], row["il"]): i for i, row in enumerate(art)}
     for card, by_set in membership.items():
