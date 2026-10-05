@@ -245,6 +245,30 @@ class Rarity(unittest.TestCase):
         self.assertEqual("msb", built["cards"][0]["ra"])
 
 
+class Price(unittest.TestCase):
+
+    def test_a_card_costs_what_its_cheapest_printing_costs(self):
+        built = tables([bolt()], [
+            bolt(id="p-alpha", prices={"usd": "450.00", "usd_foil": None}),
+            bolt(id="p-m10", set="m10", prices={"usd": "1.25", "usd_foil": "9.00"}),
+            bolt(id="p-judge", set="jud", prices={"usd": None, "usd_foil": "80.00"}),
+        ])
+        self.assertEqual(1.25, built["cards"][0]["pr"])
+
+    def test_a_foil_only_printing_still_has_a_price(self):
+        (row,) = tables([bolt(prices={"usd": None, "usd_foil": "12.50", "usd_etched": "20.00"})])["cards"]
+        self.assertEqual(12.5, row["pr"])
+
+    def test_a_card_nobody_sells_has_no_price(self):
+        for prices in ({}, None, {"usd": None, "eur": "3.00", "tix": "0.02"}, {"usd": "not a number"}):
+            (row,) = tables([bolt(prices=prices)])["cards"]
+            self.assertNotIn("pr", row, prices)
+
+    def test_both_sides_of_a_card_cost_the_same(self):
+        front, back = tables([abbey()], [abbey(prices={"usd": "4.00"})])["cards"]
+        self.assertEqual((4.0, 4.0), (front["pr"], back["pr"]))
+
+
 class Guards(unittest.TestCase):
 
     def small(self):

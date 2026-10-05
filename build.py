@@ -167,6 +167,23 @@ def _illustration(printing, source):
     return faces[0].get("illustration_id") if faces else None
 
 
+def _price(printing):
+    """What this printing costs in US dollars, in its cheapest finish, or None.
+
+    Scryfall's own caution applies and is why this is only ever sorted by: its
+    prices are a day old when published and this file is rebuilt weekly, so the
+    number says which cards are dear and which are cheap and is not a quote.
+    """
+    prices = printing.get("prices") or {}
+    known = []
+    for finish in ("usd", "usd_foil", "usd_etched"):
+        try:
+            known.append(float(prices[finish]))
+        except (KeyError, TypeError, ValueError):
+            pass
+    return min(known) if known else None
+
+
 def _art_rank(printing):
     """Lower is the better row to keep when two printings show one picture.
 
@@ -217,6 +234,7 @@ def build(oracle_cards, default_cards):
     sets = {}
     membership = {}
     rarities = {}
+    cheapest = {}
     for printing in default_cards:
         code = printing.get("set")
         if not code or printing.get("layout") == "art_series":
@@ -232,6 +250,9 @@ def build(oracle_cards, default_cards):
             picture = _illustration(printing, source) or printing["id"]
             membership.setdefault(card, {}).setdefault(code, set()).add(picture)
             rarities.setdefault(card, set()).add(printing.get("rarity"))
+            price = _price(printing)
+            if price is not None and price < cheapest.get(card, float("inf")):
+                cheapest[card] = price
             if printing.get("image_status") in NO_PICTURE:
                 continue
             row = {"k": card, "i": printing["id"], "il": picture}
@@ -257,6 +278,10 @@ def build(oracle_cards, default_cards):
     # every card that has been one.
     for card, seen_at in rarities.items():
         _put(cards[card], "ra", "".join(letter for letter, name in RARITIES if name in seen_at))
+    # A price is a printing's too, and the one worth knowing about a CARD is what
+    # the cheapest copy of it costs.
+    for card, price in cheapest.items():
+        cards[card]["pr"] = price
     art = [row for _, row in sorted(best.values(), key=lambda pair: (pair[1]["k"], pair[1]["i"], pair[1]["il"]))]
     art_index = {(row["k"], row["il"]): i for i, row in enumerate(art)}
     for card, by_set in membership.items():
