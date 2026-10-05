@@ -89,7 +89,7 @@ def is_card(card):
 
 def _put(row, key, value):
     """Sets [key] unless there is nothing to say, which keeps rows short."""
-    if value not in (None, "", [], 0, False):
+    if value not in (None, "", [], {}, 0, False):
         row[key] = value
 
 
@@ -281,7 +281,16 @@ def build(oracle_cards, default_cards, set_list=()):
             rarities.setdefault(card, set()).add(printing.get("rarity"))
             # And of the PAINTING, which is what is chosen between once a card is
             # found: Sol Ring is every rarity, and each of its paintings only some.
-            painted_at.setdefault((card, picture), set()).add(printing.get("rarity"))
+            # With the best printing of it AT each rarity, because the painting is
+            # shown under one printing's name, and "the rare one" has to be a
+            # printing that is rare. Command Tower's first painting is a common
+            # twenty-seven times and a rare once, as a judge promo.
+            if printing.get("image_status") not in NO_PICTURE:
+                at = painted_at.setdefault((card, picture), {})
+                rank = _art_rank(printing)
+                rarity = printing.get("rarity")
+                if rarity not in at or rank < at[rarity][0]:
+                    at[rarity] = (rank, [printing["id"], code, printing.get("collector_number") or ""])
             price = _price(printing)
             if price is not None and price < cheapest.get(card, float("inf")):
                 cheapest[card] = price
@@ -314,8 +323,15 @@ def build(oracle_cards, default_cards, set_list=()):
     # the cheapest copy of it costs.
     for card, price in cheapest.items():
         cards[card]["pr"] = price
+    letters = {name: letter for letter, name in RARITIES}
     for (card, picture), (_, row) in best.items():
-        _put(row, "ra", "".join(letter for letter, name in RARITIES if name in painted_at.get((card, picture), ())))
+        at = painted_at.get((card, picture), {})
+        _put(row, "ra", "".join(letter for letter, name in RARITIES if name in at))
+        # The rarity of the printing the row IS, and for every other rarity the
+        # painting has, the printing to show it as.
+        own = next((name for name, (_, printed) in at.items() if printed[0] == row["i"]), None)
+        _put(row, "r1", letters.get(own))
+        _put(row, "rp", {letters[name]: printed for name, (_, printed) in sorted(at.items()) if name in letters and name != own})
     art = [row for _, row in sorted(best.values(), key=lambda pair: (pair[1]["k"], pair[1]["i"], pair[1]["il"]))]
     art_index = {(row["k"], row["il"]): i for i, row in enumerate(art)}
     for card, by_set in membership.items():

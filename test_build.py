@@ -251,12 +251,36 @@ class Rarity(unittest.TestCase):
         self.assertEqual({"ill-Lightning Bolt": "cu", "ill-judge": "r"}, by_painting)
         self.assertEqual("cur", built["cards"][0]["ra"])
 
-    def test_a_printing_with_no_picture_yet_still_counts_toward_its_paintings_rarity(self):
+    def test_a_painting_names_the_printing_it_has_at_each_other_rarity(self):
+        # Command Tower's first painting: a common in the set it came out in, a
+        # common again and again, and a rare once, as a promo.
+        built = tables([bolt()], [
+            bolt(id="p-first", rarity="common", released_at="2011-06-17", collector_number="269"),
+            bolt(id="p-promo", set="j12", rarity="rare", released_at="2012-01-01", collector_number="8"),
+            bolt(id="p-again", set="c13", rarity="common", released_at="2013-11-01", collector_number="281"),
+        ])
+        (row,) = built["art"]
+        # It IS its earliest printing, which is a common.
+        self.assertEqual(("p-first", "c"), (row["i"], row["r1"]))
+        self.assertEqual("cr", row["ra"])
+        # And as a rare it is the promo: its id, its set, its number.
+        self.assertEqual({"r": ["p-promo", "j12", "8"]}, row["rp"])
+
+    def test_a_painting_only_ever_one_rarity_names_no_others(self):
+        (row,) = tables([bolt(rarity="uncommon")])["art"]
+        self.assertEqual(("u", "u"), (row["ra"], row["r1"]))
+        self.assertNotIn("rp", row)
+
+    def test_a_printing_with_no_picture_yet_is_not_one_to_show_a_painting_as(self):
         built = tables([bolt()], [
             bolt(id="p-real", rarity="common"),
             bolt(id="p-soon", set="new", rarity="mythic", image_status="placeholder"),
         ])
-        self.assertEqual("cm", built["art"][0]["ra"])
+        (row,) = built["art"]
+        self.assertEqual("c", row["ra"])
+        self.assertNotIn("rp", row)
+        # The CARD has still been a mythic: it is in that set at that rarity.
+        self.assertEqual("cm", built["cards"][0]["ra"])
 
     def test_the_odd_rarities_are_kept_too(self):
         built = tables([bolt()], [bolt(id="p-a", rarity="mythic"), bolt(id="p-b", set="x", rarity="special"), bolt(id="p-c", set="y", rarity="bonus")])

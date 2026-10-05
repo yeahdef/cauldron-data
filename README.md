@@ -64,6 +64,8 @@ a set that is itself in this table.
 | `a` `s` `cn` | artist, set code, collector number |
 | `fl` | flavor text of that printing |
 | `ra` | every rarity THIS PAINTING has been printed at, as the card's `ra` is |
+| `r1` | the rarity of the printing in `i` |
+| `rp` | for each OTHER rarity the painting has: the printing to show it as, `[id, set, collector number]` |
 | `ub` | 1 for a Universes Beyond printing |
 | `lo` | 1 for a low-resolution scan |
 | `bk` | 1 when the picture is on the back of the printing |
