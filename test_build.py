@@ -347,6 +347,97 @@ class Folders(unittest.TestCase):
         self.assertEqual({"aaa": "bbb", "bbb": "aaa"}, self.filed("aaa", "bbb", listed=loop))
 
 
+def booster(code="lea", set_code="lea", **more):
+    base = {
+        "name": "Alpha", "code": code, "set_code": set_code,
+        "boosters": [{"weight": 1, "sheets": {"common": 1}}],
+        "sheets": {"common": {"total_weight": 1, "cards": {"lea:1": 1}}},
+    }
+    base.update(more)
+    return base
+
+
+class Packs(unittest.TestCase):
+
+    def setUp(self):
+        # These are packs of one card, to say one thing each. The floor has its own test.
+        self.floor = build.MIN_PACK_CARDS
+        build.MIN_PACK_CARDS = 1
+
+    def tearDown(self):
+        build.MIN_PACK_CARDS = self.floor
+
+    def packs(self, boosters, printings=None):
+        return build.build([bolt()], printings or [bolt(rarity="common")], boosters=boosters)["packs"]
+
+    def test_a_box_of_a_few_cards_is_not_a_pack(self):
+        build.MIN_PACK_CARDS = 3
+        cards = [card(f"Card {n}", collector_number=str(n), rarity="common") for n in range(1, 4)]
+        sheet = {"common": {"cards": {"lea:1": 1, "lea:2": 1, "lea:3": 1}}}
+        self.assertEqual(1, len(build.build(cards, cards, boosters=[booster(sheets=sheet)])["packs"]))
+        # The same card three ways is one card.
+        sheet = {"common": {"cards": {"lea:1": 1, "lea:1:foil": 1, "lea:2": 1}}}
+        self.assertEqual([], build.build(cards, cards, boosters=[booster(sheets=sheet)])["packs"])
+
+    def test_a_sheet_names_its_cards_by_where_they_are_in_this_file(self):
+        (pack,) = self.packs([booster()])
+        self.assertEqual("lea", pack["s"])
+        self.assertEqual([[0, 0, "p-Lightning Bolt", "lea", "1", "c"]], pack["p"])
+        self.assertEqual({"common": {"c": [0, 1]}}, pack["sh"])
+        self.assertEqual([[1, {"common": 1}]], pack["v"])
+        self.assertEqual(1, pack["z"])
+
+    def test_a_foil_is_the_same_card(self):
+        sheet = {"common": {"cards": {"lea:1": 3, "lea:1:foil": 1}}}
+        (pack,) = self.packs([booster(sheets=sheet)])
+        self.assertEqual([0, 4], pack["sh"]["common"]["c"])
+
+    def test_the_play_booster_is_the_one_drafted_then_the_draft_booster(self):
+        named = [booster("lea-collector", name="C"), booster("lea-draft", name="D"), booster("lea-play", name="P")]
+        self.assertEqual("P", self.packs(named)[0]["n"])
+        self.assertEqual("D", self.packs(named[:2])[0]["n"])
+        self.assertEqual([], self.packs(named[:1]))
+
+    def test_a_sheet_of_nothing_this_file_carries_is_left_out_of_the_pack(self):
+        made = booster(
+            boosters=[{"weight": 1, "sheets": {"common": 1, "token": 1}}],
+            sheets={"common": {"cards": {"lea:1": 1}}, "token": {"cards": {"tlea:9": 1}}},
+        )
+        (pack,) = self.packs([made])
+        self.assertEqual([[1, {"common": 1}]], pack["v"])
+        self.assertNotIn("token", pack["sh"])
+
+    def test_a_pack_asks_for_no_more_of_a_sheet_than_it_has(self):
+        (pack,) = self.packs([booster(boosters=[{"weight": 1, "sheets": {"common": 10}}])])
+        self.assertEqual([[1, {"common": 1}]], pack["v"])
+
+    def test_make_ups_that_come_to_the_same_thing_are_one(self):
+        made = booster(boosters=[
+            {"weight": 3, "sheets": {"common": 1}},
+            {"weight": 1, "sheets": {"common": 1, "token": 1}},
+        ])
+        (pack,) = self.packs([made])
+        self.assertEqual([[4, {"common": 1}]], pack["v"])
+
+    def test_a_two_part_card_is_found_under_the_number_scryfall_gives_it(self):
+        sheet = {"common": {"cards": {"lea:1a": 1}}}
+        (pack,) = self.packs([booster(sheets=sheet)])
+        self.assertEqual("1", pack["p"][0][4])
+
+    def test_a_two_sided_card_brings_its_other_side(self):
+        built = build.build([abbey()], [abbey(rarity="rare")], boosters=[booster()])
+        (entry,) = built["packs"][0]["p"]
+        self.assertEqual([0, 0], entry[:2])
+        self.assertEqual([1, 1], entry[6:])
+
+    def test_a_balanced_sheet_says_so(self):
+        sheet = {"common": {"balance_colors": True, "cards": {"lea:1": 1}}}
+        self.assertEqual(1, self.packs([booster(sheets=sheet)])[0]["sh"]["common"]["b"])
+
+    def test_no_boosters_is_no_packs_and_still_a_build(self):
+        self.assertEqual([], self.packs([]))
+
+
 class Guards(unittest.TestCase):
 
     def small(self):
@@ -386,7 +477,7 @@ class TheFile(unittest.TestCase):
             lines = self.read(folder, manifest)
         self.assertEqual({"format": build.FORMAT}, lines[0])
         at = 1
-        for table in ("sets", "cards", "art", "printings"):
+        for table in ("sets", "cards", "art", "printings", "packs"):
             self.assertEqual({"table": table, "rows": len(built[table])}, lines[at])
             self.assertEqual(built[table], lines[at + 1:at + 1 + len(built[table])])
             at += 1 + len(built[table])

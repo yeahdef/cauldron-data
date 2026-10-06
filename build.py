@@ -35,6 +35,21 @@ BULK_INDEX = "https://api.scryfall.com/bulk-data"
 #: set belongs to. Final Fantasy Commander is part of Final Fantasy.
 SETS_INDEX = "https://api.scryfall.com/sets"
 
+#: What is in a booster of each set, sheet by sheet with the odds: the work of
+#: taw's magic-search-engine, published as data, and what MTGJSON's own booster
+#: tables are made from. Scryfall says a card's rarity and nothing about packs.
+BOOSTERS = "https://raw.githubusercontent.com/taw/magic-sealed-data/master/sealed_basic_data.json"
+
+#: The booster a set is drafted from, by what that file calls it: a Play Booster
+#: where there is one, the Draft Booster before those, and the only booster there
+#: was before anybody had to say which.
+DRAFTED = ("-play", "-draft", "")
+
+#: The fewest different cards a booster may draw from and still be a pack here. A
+#: Spellbook is eight cards in a box, and a "pack" of it is the box again. March of
+#: the Machine: The Aftermath, at fifty, is the smallest set that was really opened.
+MIN_PACK_CARDS = 50
+
 #: One row per card, for the rules; one row per printing, for pictures and sets.
 SOURCES = ("oracle_cards", "default_cards")
 
@@ -227,8 +242,97 @@ def _folders(listed, kept):
     return out
 
 
-def build(oracle_cards, default_cards, set_list=()):
-    """The four tables. Each source is any iterable of dicts; [set_list] is Scryfall's list of sets."""
+def _packs(boosters, numbered, art_index, sets):
+    """One row per set that was sold in boosters: what a pack of it holds.
+
+    [boosters] is taw's list, which names every card on every sheet as set and
+    collector number; [numbered] is this build's printings by the same. A row is
+
+        s   the set
+        n   what the booster is called
+        z   how many cards the likeliest pack holds
+        v   every make-up a pack can have, as [weight, {sheet: how many}]
+        p   the printings the sheets draw from, each [card row, art row, Scryfall
+            id, set, collector number, rarity letter], with the card and art rows
+            of its other side after those where it has one
+        sh  the sheets, each {"c": [printing, weight, printing, weight, ...]} with
+            printings as positions in p, and "b" where the sheet is dealt with one
+            card of each colour first
+
+    A foil is the same card to a printer with no foil, so a sheet's foil and
+    non-foil copies of a printing are one entry with their weights added. A card
+    this file does not carry (there are few: a printing with no picture yet) is
+    left off its sheet, and a pack is asked for no more of a sheet than it has.
+    A booster that draws from fewer than [MIN_PACK_CARDS] different cards is not a
+    pack at all.
+    """
+    letters = {name: letter for letter, name in RARITIES}
+    by_code = {b.get("code"): b for b in boosters}
+    out = []
+    for code in sorted(sets):
+        booster = next((by_code[code + kind] for kind in DRAFTED if by_code.get(code + kind, {}).get("set_code") == code), None)
+        if not booster:
+            continue
+        sheets = {}
+        for name, sheet in booster.get("sheets", {}).items():
+            weights = {}
+            for ref, weight in sheet.get("cards", {}).items():
+                parts = ref.lower().split(":")
+                if len(parts) < 2:
+                    continue
+                # A card of two parts is numbered "61a" there and "61" by Scryfall.
+                key = (parts[0], parts[1])
+                if key not in numbered and parts[1].endswith("a"):
+                    key = (parts[0], parts[1][:-1])
+                if key in numbered:
+                    weights[key] = weights.get(key, 0) + weight
+            if weights:
+                sheets[name] = (weights, bool(sheet.get("balance_colors")))
+        variants = {}
+        for variant in booster.get("boosters", []):
+            # In the order the file gives them, which is the order of the pack.
+            take = {name: min(n, len(sheets[name][0])) for name, n in variant.get("sheets", {}).items() if name in sheets}
+            if take:
+                key = json.dumps(take)
+                variants[key] = (variants.get(key, (0, take))[0] + variant.get("weight", 1), take)
+        if not variants:
+            continue
+        used = {name for _, take in variants.values() for name in take}
+        printings, where, rows = [], {}, {}
+        for name in sorted(used):
+            weights, balanced = sheets[name]
+            flat = []
+            for key in sorted(weights):
+                if key not in where:
+                    where[key] = len(printings)
+                    ident, rarity, faces = numbered[key]
+                    front = [f for f in faces if f[2] == "front"] or faces
+                    back = [f for f in faces if f[2] == "back"]
+                    entry = [front[0][0], art_index[(front[0][0], front[0][1])], ident, key[0], key[1], letters.get(rarity, "")]
+                    if back and (back[0][0], back[0][1]) in art_index:
+                        entry += [back[0][0], art_index[(back[0][0], back[0][1])]]
+                    printings.append(entry)
+                flat += [where[key], weights[key]]
+            rows[name] = {"c": flat}
+            if balanced:
+                rows[name]["b"] = 1
+        if len({entry[0] for entry in printings}) < MIN_PACK_CARDS:
+            continue
+        ordered = sorted(variants.values(), key=lambda v: (-v[0], json.dumps(v[1])))
+        out.append({
+            "s": code,
+            "n": booster.get("name") or code,
+            "z": sum(ordered[0][1].values()),
+            "v": [[weight, take] for weight, take in ordered],
+            "p": printings,
+            "sh": rows,
+        })
+    return out
+
+
+def build(oracle_cards, default_cards, set_list=(), boosters=()):
+    """The five tables. Each source is any iterable of dicts; [set_list] is Scryfall's
+    list of sets and [boosters] is taw's list of what is in each booster."""
     set_list = list(set_list)
     oracle_cards = [c for c in oracle_cards if is_card(c) and c.get("oracle_id")]
     # Sorted, so a build from unchanged data is byte for byte the same file and no
@@ -264,6 +368,7 @@ def build(oracle_cards, default_cards, set_list=()):
     rarities = {}
     painted_at = {}
     cheapest = {}
+    numbered = {}
     for printing in default_cards:
         code = printing.get("set")
         if not code or printing.get("layout") == "art_series":
@@ -308,6 +413,11 @@ def build(oracle_cards, default_cards, set_list=()):
             rank = _art_rank(printing)
             if key not in best or rank < best[key][0]:
                 best[key] = (rank, row)
+            # By set and number, which is how a booster's sheets name their cards.
+            number = (code, (printing.get("collector_number") or "").lower())
+            if number not in numbered or numbered[number][0] != printing["id"]:
+                numbered[number] = (printing["id"], printing.get("rarity"), [])
+            numbered[number][2].append((card, picture, side))
         if seen:
             known = sets.setdefault(code, {"c": code, "n": printing.get("set_name", code)})
             _put(known, "ty", printing.get("set_type"))
@@ -349,12 +459,13 @@ def build(oracle_cards, default_cards, set_list=()):
         "cards": cards,
         "art": art,
         "printings": printings,
+        "packs": _packs(list(boosters), numbered, art_index, sets),
     }
 
 
 # What a healthy build looks like. Scryfall grows; it does not shrink. A count
 # under one of these is a failed download or a changed format, never fewer cards.
-MINIMUM = {"cards": 34_000, "art": 49_000, "sets": 650, "printings": 34_000}
+MINIMUM = {"cards": 34_000, "art": 49_000, "sets": 650, "printings": 34_000, "packs": 150}
 
 #: How far a count may fall from the last published build before it is refused.
 MAX_DROP = 0.01
@@ -412,7 +523,7 @@ def write(tables, out_dir, sources=None, now=None):
             gz.write(b"\n")
 
         line({"format": FORMAT})
-        for table in ("sets", "cards", "art", "printings"):
+        for table in ("sets", "cards", "art", "printings", "packs"):
             # The count comes BEFORE the rows, so a reader can tell a file that
             # stopped early from one that ended.
             line({"table": table, "rows": len(tables[table])})
@@ -484,6 +595,12 @@ def download_sets():
     return listed
 
 
+def download_boosters():
+    """What is in each booster, fetched fresh. See [BOOSTERS]."""
+    with _get(BOOSTERS) as response:
+        return json.load(response)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default="dist")
@@ -492,6 +609,7 @@ def main(argv=None):
     for source in SOURCES:
         parser.add_argument(f"--{source.replace('_', '-')}", help="a local .jsonl.gz to use instead of downloading")
     parser.add_argument("--sets", help="a local copy of api.scryfall.com/sets to use instead of downloading")
+    parser.add_argument("--boosters", help="a local copy of taw's sealed_basic_data.json to use instead of downloading")
     args = parser.parse_args(argv)
 
     local = {source: getattr(args, source) for source in SOURCES}
@@ -513,7 +631,13 @@ def main(argv=None):
     else:
         set_list = download_sets()
 
-    tables = build(*(read_jsonl(paths[source]) for source in SOURCES), set_list=set_list)
+    if args.boosters:
+        with open(args.boosters, encoding="utf-8") as f:
+            boosters = json.load(f)
+    else:
+        boosters = download_boosters()
+
+    tables = build(*(read_jsonl(paths[source]) for source in SOURCES), set_list=set_list, boosters=boosters)
     try:
         check(tables, previous)
     except BuildError as error:
