@@ -45,6 +45,12 @@ BOOSTERS = "https://raw.githubusercontent.com/taw/magic-sealed-data/master/seale
 #: was before anybody had to say which.
 DRAFTED = ("-play", "-draft", "")
 
+#: The other boosters a set was sold in, each a pack of its own beside the one it
+#: is drafted from: by what the pack row calls the kind, and what taw's file puts
+#: after the set's code for it. Not the samples, promos, theme boosters and
+#: six-card packs that file also has, which nobody would choose to open.
+OTHER_BOOSTERS = (("set", "-set"), ("collector", "-collector"), ("jumpstart", "-jumpstart"))
+
 #: The fewest different cards a booster may draw from and still be a pack here. A
 #: Spellbook is eight cards in a box, and a "pack" of it is the box again. March of
 #: the Machine: The Aftermath, at fifty, is the smallest set that was really opened.
@@ -249,6 +255,8 @@ def _packs(boosters, numbered, art_index, sets):
     collector number; [numbered] is this build's printings by the same. A row is
 
         s   the set
+        k   which of the set's boosters this is, where it is not the one it is
+            drafted from: "set", "collector" or "jumpstart"
         n   what the booster is called
         z   how many cards the likeliest pack holds
         v   every make-up a pack can have, as [weight, {sheet: how many}]
@@ -270,63 +278,68 @@ def _packs(boosters, numbered, art_index, sets):
     by_code = {b.get("code"): b for b in boosters}
     out = []
     for code in sorted(sets):
-        booster = next((by_code[code + kind] for kind in DRAFTED if by_code.get(code + kind, {}).get("set_code") == code), None)
-        if not booster:
-            continue
-        sheets = {}
-        for name, sheet in booster.get("sheets", {}).items():
-            weights = {}
-            for ref, weight in sheet.get("cards", {}).items():
-                parts = ref.lower().split(":")
-                if len(parts) < 2:
-                    continue
-                # A card of two parts is numbered "61a" there and "61" by Scryfall.
-                key = (parts[0], parts[1])
-                if key not in numbered and parts[1].endswith("a"):
-                    key = (parts[0], parts[1][:-1])
-                if key in numbered:
-                    weights[key] = weights.get(key, 0) + weight
-            if weights:
-                sheets[name] = (weights, bool(sheet.get("balance_colors")))
-        variants = {}
-        for variant in booster.get("boosters", []):
-            # In the order the file gives them, which is the order of the pack.
-            take = {name: min(n, len(sheets[name][0])) for name, n in variant.get("sheets", {}).items() if name in sheets}
-            if take:
-                key = json.dumps(take)
-                variants[key] = (variants.get(key, (0, take))[0] + variant.get("weight", 1), take)
-        if not variants:
-            continue
-        used = {name for _, take in variants.values() for name in take}
-        printings, where, rows = [], {}, {}
-        for name in sorted(used):
-            weights, balanced = sheets[name]
-            flat = []
-            for key in sorted(weights):
-                if key not in where:
-                    where[key] = len(printings)
-                    ident, rarity, faces = numbered[key]
-                    front = [f for f in faces if f[2] == "front"] or faces
-                    back = [f for f in faces if f[2] == "back"]
-                    entry = [front[0][0], art_index[(front[0][0], front[0][1])], ident, key[0], key[1], letters.get(rarity, "")]
-                    if back and (back[0][0], back[0][1]) in art_index:
-                        entry += [back[0][0], art_index[(back[0][0], back[0][1])]]
-                    printings.append(entry)
-                flat += [where[key], weights[key]]
-            rows[name] = {"c": flat}
-            if balanced:
-                rows[name]["b"] = 1
-        if len({entry[0] for entry in printings}) < MIN_PACK_CARDS:
-            continue
-        ordered = sorted(variants.values(), key=lambda v: (-v[0], json.dumps(v[1])))
-        out.append({
-            "s": code,
-            "n": booster.get("name") or code,
-            "z": sum(ordered[0][1].values()),
-            "v": [[weight, take] for weight, take in ordered],
-            "p": printings,
-            "sh": rows,
-        })
+        drafted = next((by_code[code + kind] for kind in DRAFTED if by_code.get(code + kind, {}).get("set_code") == code), None)
+        offered = [("", drafted)] + [(kind, by_code.get(code + suffix)) for kind, suffix in OTHER_BOOSTERS]
+        for kind, booster in offered:
+            if not booster or booster.get("set_code") != code:
+                continue
+            sheets = {}
+            for name, sheet in booster.get("sheets", {}).items():
+                weights = {}
+                for ref, weight in sheet.get("cards", {}).items():
+                    parts = ref.lower().split(":")
+                    if len(parts) < 2:
+                        continue
+                    # A card of two parts is numbered "61a" there and "61" by Scryfall.
+                    key = (parts[0], parts[1])
+                    if key not in numbered and parts[1].endswith("a"):
+                        key = (parts[0], parts[1][:-1])
+                    if key in numbered:
+                        weights[key] = weights.get(key, 0) + weight
+                if weights:
+                    sheets[name] = (weights, bool(sheet.get("balance_colors")))
+            variants = {}
+            for variant in booster.get("boosters", []):
+                # In the order the file gives them, which is the order of the pack.
+                take = {name: min(n, len(sheets[name][0])) for name, n in variant.get("sheets", {}).items() if name in sheets}
+                if take:
+                    key = json.dumps(take)
+                    variants[key] = (variants.get(key, (0, take))[0] + variant.get("weight", 1), take)
+            if not variants:
+                continue
+            used = {name for _, take in variants.values() for name in take}
+            printings, where, rows = [], {}, {}
+            for name in sorted(used):
+                weights, balanced = sheets[name]
+                flat = []
+                for key in sorted(weights):
+                    if key not in where:
+                        where[key] = len(printings)
+                        ident, rarity, faces = numbered[key]
+                        front = [f for f in faces if f[2] == "front"] or faces
+                        back = [f for f in faces if f[2] == "back"]
+                        entry = [front[0][0], art_index[(front[0][0], front[0][1])], ident, key[0], key[1], letters.get(rarity, "")]
+                        if back and (back[0][0], back[0][1]) in art_index:
+                            entry += [back[0][0], art_index[(back[0][0], back[0][1])]]
+                        printings.append(entry)
+                    flat += [where[key], weights[key]]
+                rows[name] = {"c": flat}
+                if balanced:
+                    rows[name]["b"] = 1
+            if len({entry[0] for entry in printings}) < MIN_PACK_CARDS:
+                continue
+            ordered = sorted(variants.values(), key=lambda v: (-v[0], json.dumps(v[1])))
+            row = {
+                "s": code,
+                "n": booster.get("name") or code,
+                "z": sum(ordered[0][1].values()),
+                "v": [[weight, take] for weight, take in ordered],
+                "p": printings,
+                "sh": rows,
+            }
+            if kind:
+                row["k"] = kind
+            out.append(row)
     return out
 
 

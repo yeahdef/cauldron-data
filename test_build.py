@@ -396,7 +396,18 @@ class Packs(unittest.TestCase):
         named = [booster("lea-collector", name="C"), booster("lea-draft", name="D"), booster("lea-play", name="P")]
         self.assertEqual("P", self.packs(named)[0]["n"])
         self.assertEqual("D", self.packs(named[:2])[0]["n"])
-        self.assertEqual([], self.packs(named[:1]))
+        # A collector booster is nobody's draft pack, and is a pack of its own kind.
+        self.assertEqual(["collector"], [p.get("k") for p in self.packs(named[:1])])
+
+    def test_a_sets_other_boosters_are_packs_of_their_own(self):
+        named = [
+            booster("lea-draft", name="D"), booster("lea-collector", name="C"), booster("lea-set", name="S"),
+            booster("lea-jumpstart", name="J"), booster("lea-collector-sample", name="no"), booster("lea-theme-w", name="no"),
+        ]
+        packs = self.packs(named)
+        self.assertEqual([("D", None), ("S", "set"), ("C", "collector"), ("J", "jumpstart")], [(p["n"], p.get("k")) for p in packs])
+        # A set sold only as Jumpstart packs has that pack and no draft one.
+        self.assertEqual([("J", "jumpstart")], [(p["n"], p.get("k")) for p in self.packs(named[3:4])])
 
     def test_a_sheet_of_nothing_this_file_carries_is_left_out_of_the_pack(self):
         made = booster(

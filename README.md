@@ -84,6 +84,7 @@ booster there was before either.
 | | |
 |---|---|
 | `s` | the set |
+| `k` | which of the set's boosters this is, where it is not the one the set is drafted from: `set`, `collector` or `jumpstart`. A set can have a row of each |
 | `n` | what the booster is called |
 | `z` | how many cards the likeliest pack holds |
 | `v` | every make-up a pack can have, likeliest first, each `[weight, {sheet: how many}]` with the sheets in pack order |
