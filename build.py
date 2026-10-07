@@ -68,6 +68,16 @@ NOT_CARD_LAYOUTS = {
 #: of the card index, and kept all the same, in tables of their own, because the
 #: app deals them: a planar deck and a scheme deck. See [_Oversized].
 OVERSIZED_LAYOUTS = {"planar", "scheme"}
+#: What a table makes rather than draws: by Scryfall layout, and see [is_token]
+#: for the rest of it. Kept in a table of their own, as Scryfall gives them.
+TOKEN_LAYOUTS = {"token", "double_faced_token", "emblem"}
+#: The fields of a token the app reads, under Scryfall's own names for them.
+TOKEN_FIELDS = (
+    "id", "oracle_id", "name", "layout", "type_line", "oracle_text", "power", "toughness",
+    "colors", "keywords", "illustration_id", "artist", "promo_types",
+)
+TOKEN_FACE_FIELDS = ("name", "type_line", "oracle_text", "power", "toughness", "colors", "illustration_id", "artist")
+TOKEN_PICTURES = ("png", "large", "normal", "art_crop")
 #: Checked on the ORACLE row only. See [is_card] for why not on a printing.
 NOT_CARD_SET_TYPES = {"memorabilia", "token", "minigame"}
 #: Type lines that open with one of these are substitute cards, counters, dungeons
@@ -153,6 +163,7 @@ def card_rows(card):
             row["mv"] = int(mana_value) if float(mana_value).is_integer() else mana_value
         _put(row, "r", card.get("edhrec_rank"))
         row["y"] = card.get("layout", "")
+        _put(row, "kw", card.get("keywords"))
         rows.append(row)
     return rows
 
@@ -227,6 +238,128 @@ def _art_rank(printing):
         printing.get("released_at") or "",
         printing["id"],
     )
+
+
+def _type_words(printing):
+    """Every word of the type line, both faces, lowercased: what Scryfall's `t:` asks of."""
+    lines = [printing.get("type_line") or ""] + [face.get("type_line") or "" for face in printing.get("card_faces") or []]
+    return {word.lower() for line in lines for word in line.replace("\u2014", " ").replace("//", " ").split()}
+
+
+def is_token(printing):
+    """Whether a printing is something a table makes: a token, an emblem, a dungeon
+    or a sheet of stickers, in English.
+
+    The search the app used to build its token index from, asked of the bulk data:
+    `layout:token or layout:double_faced_token or layout:emblem or (layout:flip
+    t:token) or (t:dungeon -t:planeswalker)`, less the substitute cards of
+    memorabilia sets (`st:memorabilia t:card`), and Unfinity's sticker sheets, whose
+    type line is the one word.
+
+    Checked against that search on 2026-10-06: every picture it returned is
+    found here. See [_Tokens] for the few things found here that it did not return.
+    """
+    if printing.get("lang") != "en":
+        return False
+    # The games printed on the inserts of a booster. Their type line is "Card" as
+    # a marker's is, and they are nothing a table makes.
+    if printing.get("set_type") == "minigame":
+        return False
+    if (printing.get("type_line") or "").strip() == "Stickers":
+        return True
+    words = _type_words(printing)
+    layout = printing.get("layout")
+    faces = printing.get("card_faces") or []
+    wanted = (
+        layout in TOKEN_LAYOUTS
+        or (layout == "flip" and "token" in words)
+        or ("dungeon" in words and "planeswalker" not in words)
+        # A token printed with a different picture on each side: Scryfall calls
+        # the card reversible and each of its faces a token.
+        or (layout == "reversible_card" and bool(faces) and all(face.get("layout") in TOKEN_LAYOUTS for face in faces))
+    )
+    if not wanted:
+        return False
+    return not (printing.get("set_type") == "memorabilia" and "card" in words)
+
+
+def _token_row(printing):
+    """A token as the app reads one: Scryfall's own object, less what it does not read."""
+    def pictures(source):
+        uris = source.get("image_uris") or {}
+        return {size: uris[size] for size in TOKEN_PICTURES if uris.get(size)}
+
+    row = {}
+    for field in TOKEN_FIELDS:
+        _put(row, field, printing.get(field))
+    _put(row, "image_uris", pictures(printing))
+    faces = []
+    for source in printing.get("card_faces") or []:
+        face = {}
+        for field in TOKEN_FACE_FIELDS:
+            # Kept when "0", as a card's are: a 0/1 has a power.
+            if source.get(field) not in (None, "", []):
+                face[field] = source[field]
+        _put(face, "image_uris", pictures(source))
+        faces.append(face)
+    _put(row, "card_faces", faces)
+    # A power of "0" is a power. [_put] drops it with the empty things.
+    for field in ("power", "toughness"):
+        if printing.get(field) is not None:
+            row[field] = printing[field]
+    return row
+
+
+def _token_rank(printing):
+    """Lower is the printing to keep of those that show one picture of a token.
+
+    The oldest good scan, and of two in one set the lower number: which is the
+    printing Scryfall's own search gave for 1,710 of 1,728 pictures on 2026-10-06,
+    and the app's token index had been built from that search.
+    """
+    number = printing.get("collector_number") or ""
+    digits = "".join(ch for ch in number if ch.isdigit())
+    return (
+        printing.get("image_status") != "highres_scan",
+        "paper" not in (printing.get("games") or []),
+        printing.get("released_at") or "",
+        printing.get("set") or "",
+        int(digits) if digits else 10 ** 9,
+        number,
+        printing["id"],
+    )
+
+
+class _Tokens:
+    """One row per PICTURE, which is what the app deals between.
+
+    A picture is its illustration, or the pair of them on a token with a face on
+    each side. Counted once whatever it is a picture OF, as Scryfall's search for
+    unique art counts it: a Germ and a Phyrexian Germ that share a painting are one
+    row, and it is the older.
+
+    A token with no illustration id at all is one row for itself. Scryfall's
+    search made one row of ALL of those between them, which is how three dungeons
+    came to be missing from an index built from it.
+    """
+
+    def __init__(self):
+        self.best = {}
+
+    def add(self, printing):
+        if not is_token(printing):
+            return
+        faces = printing.get("card_faces") or []
+        picture = tuple(
+            [printing.get("illustration_id") or ""] + [face.get("illustration_id") or "" for face in faces]
+        )
+        key = picture if any(picture) else ("", printing.get("oracle_id") or printing.get("name", ""))
+        rank = _token_rank(printing)
+        if key not in self.best or rank < self.best[key][0]:
+            self.best[key] = (rank, _token_row(printing))
+
+    def table(self):
+        return [row for _, (_, row) in sorted(self.best.items(), key=lambda item: item[1][1]["id"])]
 
 
 class _Oversized:
@@ -435,10 +568,13 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
     cheapest = {}
     numbered = {}
     on_paper = set()
+    painted_on_paper = set()
     in_earnest = set()
     oversized = _Oversized()
+    tokens = _Tokens()
     for printing in default_cards:
         oversized.add(printing)
+        tokens.add(printing)
         code = printing.get("set")
         if not code or printing.get("layout") == "art_series":
             continue
@@ -455,7 +591,10 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
             rarities.setdefault(card, set()).add(printing.get("rarity"))
             if "paper" in (printing.get("games") or []):
                 on_paper.add(card)
-            if printing.get("set_type") != "funny":
+                painted_on_paper.add((card, picture))
+            # A playtest card is a joke wherever it was sold: Mystery Booster's
+            # are in a set Scryfall calls a masters set.
+            if printing.get("set_type") != "funny" and "playtest" not in (printing.get("promo_types") or []):
                 in_earnest.add(card)
             # And of the PAINTING, which is what is chosen between once a card is
             # found: Sol Ring is every rarity, and each of its paintings only some.
@@ -482,6 +621,10 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
             _put(row, "ub", UNIVERSES_BEYOND in (printing.get("promo_types") or []))
             _put(row, "lo", printing.get("image_status") == "lowres")
             _put(row, "bk", side == "back")
+            # Only where it is not English: a painting that was only ever printed
+            # in another language, which is some of the best known there are.
+            if printing.get("lang") not in (None, "en"):
+                row["lg"] = printing["lang"]
             key = (card, picture)
             rank = _art_rank(printing)
             if key not in best or rank < best[key][0]:
@@ -518,6 +661,8 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
         cards[card]["pr"] = price
     letters = {name: letter for letter, name in RARITIES}
     for (card, picture), (_, row) in best.items():
+        # A painting only ever shown in a client, on a card that is on paper.
+        _put(row, "dg", (card, picture) not in painted_on_paper)
         at = painted_at.get((card, picture), {})
         _put(row, "ra", "".join(letter for letter, name in RARITIES if name in at))
         # The rarity of the printing the row IS, and for every other rarity the
@@ -546,6 +691,7 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
         "packs": _packs(list(boosters), numbered, art_index, sets),
         "oversized": oversized,
         "oversized_art": oversized_art,
+        "tokens": tokens.table(),
     }
 
 
@@ -553,7 +699,7 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
 # under one of these is a failed download or a changed format, never fewer cards.
 MINIMUM = {
     "cards": 34_000, "art": 49_000, "sets": 650, "printings": 34_000, "packs": 150,
-    "oversized": 290, "oversized_art": 300,
+    "oversized": 290, "oversized_art": 300, "tokens": 1_700,
 }
 
 #: How far a count may fall from the last published build before it is refused.
@@ -612,7 +758,7 @@ def write(tables, out_dir, sources=None, now=None):
             gz.write(b"\n")
 
         line({"format": FORMAT})
-        for table in ("sets", "cards", "art", "printings", "packs", "oversized", "oversized_art"):
+        for table in ("sets", "cards", "art", "printings", "packs", "oversized", "oversized_art", "tokens"):
             # The count comes BEFORE the rows, so a reader can tell a file that
             # stopped early from one that ended.
             line({"table": table, "rows": len(tables[table])})

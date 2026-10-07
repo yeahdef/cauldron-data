@@ -26,6 +26,9 @@ Planes, phenomena and schemes are kept too, in two tables of their own after the
 rest: they are not cards anybody looks up, and the app deals them, off a planar
 deck and a scheme deck.
 
+And tokens, emblems, dungeons and sticker sheets, in a last table, one row per
+picture of each.
+
 ## The file
 
 `manifest.json` names the current data file and gives its SHA-256, its size and
@@ -58,6 +61,7 @@ a set that is itself in this table.
 | `ra` | every rarity the card has been printed at, as letters: `c` common, `u` uncommon, `r` rare, `m` mythic, `s` special, `b` bonus |
 | `y` | Scryfall layout |
 | `meld` | on a meld half: the oracle id of what it melds into |
+| `kw` | Scryfall's keywords for the card: `["Flying", "Squad"]` |
 | `dg` | true for a card that has never been printed on paper |
 | `fu` | true for a joke card: every printing of it is in a set of type `funny` and no format will have it. Unfinity's eternal-legal cards are not |
 
@@ -76,6 +80,8 @@ a set that is itself in this table.
 | `ub` | 1 for a Universes Beyond printing |
 | `lo` | 1 for a low-resolution scan |
 | `bk` | 1 when the picture is on the back of the printing |
+| `dg` | true for a painting that has never been printed on paper, on a card that may have been |
+| `lg` | the language of the printing in `i`, where it is not English: a painting only ever printed in another |
 
 The art crop is at
 `https://cards.scryfall.io/art_crop/{front|back}/{i[0]}/{i[1]}/{i}.jpg`.
@@ -110,7 +116,17 @@ Scryfall layout, which is `planar` or `scheme`.
 id of the printing the picture is taken from, `il` illustration id, `a` artist,
 `s` set code, `cn` collector number.
 
-A reader that does not know these two can skip them the same way: they come last.
+**tokens**, one per picture of each token, emblem, dungeon and sticker sheet printed
+in English. Each row is Scryfall's own card object under Scryfall's own names, cut
+down to `id oracle_id name layout type_line oracle_text power toughness colors
+keywords illustration_id artist promo_types`, `image_uris` (`png large normal
+art_crop`), and for a token with a face on each side `card_faces`, each with its
+own `name type_line oracle_text power toughness colors illustration_id artist
+image_uris`. A picture is one row whatever it is a picture of, as Scryfall's
+search for unique art counts it; of the printings that share it the row is the
+oldest good scan. A token with no illustration id is one row for itself.
+
+A reader that does not know these three can skip them the same way: they come last.
 
 ## Credit
 

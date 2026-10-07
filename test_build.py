@@ -488,7 +488,7 @@ class TheFile(unittest.TestCase):
             lines = self.read(folder, manifest)
         self.assertEqual({"format": build.FORMAT}, lines[0])
         at = 1
-        for table in ("sets", "cards", "art", "printings", "packs", "oversized", "oversized_art"):
+        for table in ("sets", "cards", "art", "printings", "packs", "oversized", "oversized_art", "tokens"):
             self.assertEqual({"table": table, "rows": len(built[table])}, lines[at])
             self.assertEqual(built[table], lines[at + 1:at + 1 + len(built[table])])
             at += 1 + len(built[table])
@@ -575,8 +575,130 @@ class OversizedAndMomir(unittest.TestCase):
             manifest = build.write(tables, out)
             with gzip.open(os.path.join(out, manifest["file"]), "rt", encoding="utf-8") as f:
                 headers = [json.loads(line)["table"] for line in f if line.startswith('{"table"')]
-        self.assertEqual(["sets", "cards", "art", "printings", "packs", "oversized", "oversized_art"], headers)
+        self.assertEqual(["sets", "cards", "art", "printings", "packs", "oversized", "oversized_art", "tokens"], headers)
         self.assertEqual(1, manifest["counts"]["oversized"])
+
+
+class Tokens(unittest.TestCase):
+    def token(self, name="Goblin", **more):
+        base = card(
+            name, layout="token", type_line="Token Creature \u2014 Goblin", oracle_text="", set="tm21", set_type="token",
+            power="1", toughness="1", keywords=["Haste"],
+            image_uris={"png": "p.png", "large": "l.jpg", "normal": "n.jpg", "art_crop": "a.jpg", "small": "s.jpg"},
+        )
+        base.update(more)
+        return base
+
+    def names(self, *printings):
+        return [row["name"] for row in build.build([], list(printings))["tokens"]]
+
+    def test_a_token_is_kept_as_scryfall_gives_it_less_what_is_not_read(self):
+        row = build.build([], [self.token()])["tokens"][0]
+        self.assertEqual("p-Goblin", row["id"])
+        self.assertEqual("o-Goblin", row["oracle_id"])
+        self.assertEqual("Token Creature \u2014 Goblin", row["type_line"])
+        self.assertEqual(["Haste"], row["keywords"])
+        self.assertEqual({"png": "p.png", "large": "l.jpg", "normal": "n.jpg", "art_crop": "a.jpg"}, row["image_uris"])
+        self.assertNotIn("set", row)
+        self.assertNotIn("mana_cost", row)
+
+    def test_a_power_of_nought_is_a_power(self):
+        row = build.build([], [self.token("Wall", power="0", toughness="3")])["tokens"][0]
+        self.assertEqual("0", row["power"])
+
+    def test_a_token_is_not_a_card(self):
+        tables = build.build([self.token()], [self.token()])
+        self.assertEqual([], tables["cards"])
+
+    def test_one_row_for_each_picture_and_the_oldest_printing_of_it(self):
+        first = self.token(released_at="2013-09-27", id="p-old")
+        again = self.token(released_at="2018-12-07", id="p-new")
+        repainted = self.token(id="p-other", illustration_id="ill-other")
+        rows = build.build([], [again, first, repainted])["tokens"]
+        self.assertEqual(["p-old", "p-other"], sorted(row["id"] for row in rows))
+
+    def test_a_picture_is_one_row_whatever_it_is_a_picture_of_and_it_is_the_older(self):
+        germ = self.token("Germ", illustration_id="ill-shared", released_at="2011-02-04")
+        other = self.token("Phyrexian Germ", id="p-other", illustration_id="ill-shared", released_at="2023-02-03")
+        self.assertEqual(["Germ"], self.names(other, germ))
+
+    def test_of_two_printings_in_one_set_it_is_the_lower_number(self):
+        low = self.token(id="p-zzz", collector_number="4")
+        high = self.token(id="p-aaa", collector_number="26")
+        self.assertEqual(["p-zzz"], [row["id"] for row in build.build([], [high, low])["tokens"]])
+
+    def test_the_games_on_a_booster_insert_are_not_tokens(self):
+        game = self.token("Booster Blitz", type_line="Card", set_type="minigame", illustration_id=None)
+        self.assertEqual([], self.names(game))
+
+    def test_tokens_with_no_illustration_are_each_kept_once(self):
+        mine = self.token("Lost Mine of Phandelver", layout="normal", type_line="Dungeon", illustration_id=None)
+        again = dict(mine, id="p-again", set="oafr")
+        mage = self.token("Dungeon of the Mad Mage", layout="normal", type_line="Dungeon", illustration_id=None)
+        self.assertEqual(["Dungeon of the Mad Mage", "Lost Mine of Phandelver"], sorted(self.names(mine, again, mage)))
+
+    def test_what_is_and_is_not_a_token(self):
+        emblem = self.token("Chandra Emblem", layout="emblem", type_line="Emblem \u2014 Chandra")
+        stickers = self.token("Ancestral Hot Dog Minotaur", layout="normal", type_line="Stickers")
+        flipped = self.token("Flip Token", layout="flip", type_line="Token Creature \u2014 Human // Token Creature \u2014 Wolf")
+        walker = self.token("Dungeon Walker", layout="normal", type_line="Legendary Planeswalker \u2014 Dungeon")
+        substitute = self.token("Substitute", layout="token", type_line="Card", set_type="memorabilia")
+        checklist = self.token("Checklist", layout="token", type_line="Card", set_type="token")
+        french = self.token("Gobelin", lang="fr")
+        plain = bolt()
+        kept = self.names(emblem, stickers, flipped, walker, substitute, checklist, french, plain)
+        self.assertEqual(["Ancestral Hot Dog Minotaur", "Chandra Emblem", "Checklist", "Flip Token"], sorted(kept))
+
+    def test_a_token_with_a_face_on_each_side_keeps_both_faces(self):
+        face = {"name": "Goblin", "type_line": "Token Creature \u2014 Goblin", "power": "1", "toughness": "1",
+                "illustration_id": "ill-a", "image_uris": {"png": "a.png", "small": "a-s.jpg"}, "mana_cost": ""}
+        other = dict(face, name="Soldier", illustration_id="ill-b", power="0")
+        both = self.token("Goblin // Soldier", layout="double_faced_token", oracle_id=None, illustration_id=None,
+                          image_uris=None, card_faces=[face, other])
+        both.pop("oracle_id")
+        row = build.build([], [both])["tokens"][0]
+        self.assertEqual(["Goblin", "Soldier"], [f["name"] for f in row["card_faces"]])
+        self.assertEqual({"png": "a.png"}, row["card_faces"][0]["image_uris"])
+        self.assertEqual("0", row["card_faces"][1]["power"])
+        self.assertNotIn("mana_cost", row["card_faces"][0])
+        self.assertNotIn("image_uris", row)
+
+    def test_a_reversible_token_is_one_and_a_reversible_card_is_not(self):
+        sides = [{"name": "Mechtitan", "layout": "token", "type_line": "Token Legendary Artifact Creature \u2014 Construct", "illustration_id": "ill-m"}] * 2
+        token = self.token("Mechtitan // Mechtitan", layout="reversible_card", type_line=None, card_faces=sides)
+        real = [{"name": "Mechtitan Core", "layout": "normal", "type_line": "Artifact \u2014 Vehicle", "illustration_id": "ill-c"}] * 2
+        vehicle = self.token("Mechtitan Core // Mechtitan Core", layout="reversible_card", type_line=None, card_faces=real, id="p-core")
+        self.assertEqual(["Mechtitan // Mechtitan"], self.names(token, vehicle))
+
+    def test_a_card_carries_its_keywords(self):
+        squad = card("Arco-Flagellant", keywords=["Squad"])
+        rows = build.build([squad, bolt()], [squad, bolt()])["cards"]
+        by_name = {row["n"]: row for row in rows}
+        self.assertEqual(["Squad"], by_name["Arco-Flagellant"]["kw"])
+        self.assertNotIn("kw", by_name["Lightning Bolt"])
+
+
+    def test_a_painting_only_ever_shown_in_a_client_says_so(self):
+        online = bolt(id="p-mtgo", games=["mtgo"], illustration_id="ill-online")
+        tables = build.build([bolt()], [bolt(), online])
+        by_picture = {row["il"]: row for row in tables["art"]}
+        self.assertTrue(by_picture["ill-online"]["dg"])
+        self.assertNotIn("dg", by_picture["ill-Lightning Bolt"])
+        self.assertNotIn("dg", tables["cards"][0])
+
+    def test_a_playtest_card_is_a_joke_though_its_set_is_not_called_one(self):
+        nowhere = {"vintage": "not_legal"}
+        playtest = card("Totally Safe Hideout", set="mb2", set_type="masters", promo_types=["playtest"], legalities=nowhere)
+        tables = build.build([playtest], [playtest])
+        self.assertTrue(tables["cards"][0]["fu"])
+
+
+    def test_a_painting_only_printed_in_another_language_says_which(self):
+        japanese = bolt(id="p-ja", lang="ja", illustration_id="ill-ja")
+        tables = build.build([bolt()], [bolt(), japanese])
+        by_picture = {row["il"]: row for row in tables["art"]}
+        self.assertEqual("ja", by_picture["ill-ja"]["lg"])
+        self.assertNotIn("lg", by_picture["ill-Lightning Bolt"])
 
 
 if __name__ == "__main__":
