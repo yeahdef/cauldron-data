@@ -488,7 +488,7 @@ class TheFile(unittest.TestCase):
             lines = self.read(folder, manifest)
         self.assertEqual({"format": build.FORMAT}, lines[0])
         at = 1
-        for table in ("sets", "cards", "art", "printings", "packs"):
+        for table in ("sets", "cards", "art", "printings", "packs", "oversized", "oversized_art"):
             self.assertEqual({"table": table, "rows": len(built[table])}, lines[at])
             self.assertEqual(built[table], lines[at + 1:at + 1 + len(built[table])])
             at += 1 + len(built[table])
@@ -515,6 +515,68 @@ class TheFile(unittest.TestCase):
         self.assertEqual(hashlib.sha256(data).hexdigest(), manifest["sha256"])
         self.assertEqual(len(data), manifest["size"])
         self.assertIn(manifest["sha256"][:12], manifest["file"])
+
+
+class OversizedAndMomir(unittest.TestCase):
+    def plane(self, name="Akoum", **more):
+        base = card(name, layout="planar", type_line="Plane \u2014 Zendikar", oracle_text="Chaos ensues.", set="hop", set_type="planechase")
+        base.update(more)
+        return base
+
+    def test_a_plane_is_not_a_card_and_is_kept_in_a_table_of_its_own(self):
+        tables = build.build([bolt(), self.plane()], [bolt(), self.plane()])
+        self.assertEqual(["Lightning Bolt"], [row["n"] for row in tables["cards"]])
+        self.assertEqual([{"o": "o-Akoum", "n": "Akoum", "t": "Plane \u2014 Zendikar", "x": "Chaos ensues.", "y": "planar"}], tables["oversized"])
+        self.assertEqual([{"k": 0, "i": "p-Akoum", "il": "ill-Akoum", "a": "Somebody", "s": "hop", "cn": "1"}], tables["oversized_art"])
+
+    def test_a_scheme_is_kept_too_and_each_painting_of_it_once(self):
+        first = card("All Shall Smolder", layout="scheme", type_line="Scheme", set="arc")
+        again = dict(first, id="p-reprint", set="e01")
+        repainted = dict(first, id="p-new", illustration_id="ill-new", set="dsc")
+        tables = build.build([], [first, again, repainted])
+        self.assertEqual(1, len(tables["oversized"]))
+        self.assertEqual("scheme", tables["oversized"][0]["y"])
+        self.assertEqual(["ill-All Shall Smolder", "ill-new"], sorted(row["il"] for row in tables["oversized_art"]))
+
+    def test_a_plane_nobody_printed_or_not_in_english_is_left_out(self):
+        digital = self.plane("Arena Only", games=["arena"])
+        french = self.plane("Akoum Fr", lang="fr")
+        tables = build.build([], [digital, french])
+        self.assertEqual([], tables["oversized"])
+        self.assertEqual([], tables["oversized_art"])
+
+    def test_a_card_never_printed_on_paper_says_so(self):
+        alchemy = card("A-Thing", games=["arena"], set_type="alchemy")
+        tables = build.build([bolt(), alchemy], [bolt(), alchemy])
+        by_name = {row["n"]: row for row in tables["cards"]}
+        self.assertTrue(by_name["A-Thing"]["dg"])
+        self.assertNotIn("dg", by_name["Lightning Bolt"])
+
+    def test_a_card_printed_digitally_and_on_paper_is_a_paper_card(self):
+        online = bolt(id="p-mtgo", games=["mtgo"], set="me1")
+        tables = build.build([online], [online, bolt()])
+        self.assertNotIn("dg", tables["cards"][0])
+
+    def test_a_joke_card_says_so_and_a_real_card_from_a_joke_set_does_not(self):
+        legal = {"vintage": "legal", "standard": "not_legal"}
+        nowhere = {"vintage": "not_legal", "standard": "not_legal"}
+        joke = card("Cheatyface", set="unh", set_type="funny", legalities=nowhere)
+        real = card("Saw in Half", set="unf", set_type="funny", legalities=legal)
+        plain = bolt(legalities=legal)
+        tables = build.build([joke, real, plain], [joke, real, plain])
+        by_name = {row["n"]: row for row in tables["cards"]}
+        self.assertTrue(by_name["Cheatyface"]["fu"])
+        self.assertNotIn("fu", by_name["Saw in Half"])
+        self.assertNotIn("fu", by_name["Lightning Bolt"])
+
+    def test_the_oversized_tables_are_written_after_the_rest(self):
+        tables = build.build([bolt(), self.plane()], [bolt(), self.plane()])
+        with tempfile.TemporaryDirectory() as out:
+            manifest = build.write(tables, out)
+            with gzip.open(os.path.join(out, manifest["file"]), "rt", encoding="utf-8") as f:
+                headers = [json.loads(line)["table"] for line in f if line.startswith('{"table"')]
+        self.assertEqual(["sets", "cards", "art", "printings", "packs", "oversized", "oversized_art"], headers)
+        self.assertEqual(1, manifest["counts"]["oversized"])
 
 
 if __name__ == "__main__":

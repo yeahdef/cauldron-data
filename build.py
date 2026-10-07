@@ -64,6 +64,10 @@ SOURCES = ("oracle_cards", "default_cards")
 NOT_CARD_LAYOUTS = {
     "token", "double_faced_token", "emblem", "art_series", "vanguard", "scheme", "planar",
 }
+#: The oversized cards of Planechase and Archenemy, by Scryfall layout. Not cards
+#: of the card index, and kept all the same, in tables of their own, because the
+#: app deals them: a planar deck and a scheme deck. See [_Oversized].
+OVERSIZED_LAYOUTS = {"planar", "scheme"}
 #: Checked on the ORACLE row only. See [is_card] for why not on a printing.
 NOT_CARD_SET_TYPES = {"memorabilia", "token", "minigame"}
 #: Type lines that open with one of these are substitute cards, counters, dungeons
@@ -225,6 +229,49 @@ def _art_rank(printing):
     )
 
 
+class _Oversized:
+    """Planes, phenomena and schemes, and one row per painting of each.
+
+    The printed ones in English, which are the ones a table has held: a plane that
+    exists only on Arena has no card to stand in for. A card is its Oracle id; its
+    words are the same on every printing of it, so they are read off whichever
+    sorts first. Fed a printing at a time, in the one pass [build] makes.
+    """
+
+    def __init__(self):
+        self.words = {}
+        self.best = {}
+
+    def add(self, printing):
+        if printing.get("layout") not in OVERSIZED_LAYOUTS or not printing.get("oracle_id"):
+            return
+        if printing.get("lang") != "en" or "paper" not in (printing.get("games") or []):
+            return
+        if printing.get("image_status") in NO_PICTURE:
+            return
+        oracle = printing["oracle_id"]
+        if oracle not in self.words or printing["id"] < self.words[oracle][0]:
+            row = {"o": oracle, "n": printing.get("name", "")}
+            _put(row, "t", printing.get("type_line"))
+            _put(row, "x", printing.get("oracle_text"))
+            row["y"] = printing["layout"]
+            self.words[oracle] = (printing["id"], row)
+        picture = printing.get("illustration_id") or printing["id"]
+        rank = _art_rank(printing)
+        if (oracle, picture) not in self.best or rank < self.best[(oracle, picture)][0]:
+            row = {"i": printing["id"], "il": picture}
+            _put(row, "a", printing.get("artist"))
+            _put(row, "s", printing.get("set"))
+            _put(row, "cn", printing.get("collector_number"))
+            self.best[(oracle, picture)] = (rank, row)
+
+    def tables(self):
+        cards = [row for _, (_, row) in sorted(self.words.items())]
+        at = {row["o"]: i for i, row in enumerate(cards)}
+        art = [{"k": at[oracle], **row} for (oracle, _), (_, row) in sorted(self.best.items())]
+        return cards, art
+
+
 def _folders(listed, kept):
     """Set code -> the code of the set it is filed under, for sets that have one.
 
@@ -344,10 +391,15 @@ def _packs(boosters, numbered, art_index, sets):
 
 
 def build(oracle_cards, default_cards, set_list=(), boosters=()):
-    """The five tables. Each source is any iterable of dicts; [set_list] is Scryfall's
+    """The seven tables. Each source is any iterable of dicts; [set_list] is Scryfall's
     list of sets and [boosters] is taw's list of what is in each booster."""
     set_list = list(set_list)
     oracle_cards = [c for c in oracle_cards if is_card(c) and c.get("oracle_id")]
+    # Whether anything, anywhere, lets a card be played. See "fu" below.
+    playable = {
+        c["oracle_id"] for c in oracle_cards
+        if any(status != "not_legal" for status in (c.get("legalities") or {}).values())
+    }
     # Sorted, so a build from unchanged data is byte for byte the same file and no
     # phone downloads it twice.
     oracle_cards.sort(key=lambda c: c["oracle_id"])
@@ -382,7 +434,11 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
     painted_at = {}
     cheapest = {}
     numbered = {}
+    on_paper = set()
+    in_earnest = set()
+    oversized = _Oversized()
     for printing in default_cards:
+        oversized.add(printing)
         code = printing.get("set")
         if not code or printing.get("layout") == "art_series":
             continue
@@ -397,6 +453,10 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
             picture = _illustration(printing, source) or printing["id"]
             membership.setdefault(card, {}).setdefault(code, set()).add(picture)
             rarities.setdefault(card, set()).add(printing.get("rarity"))
+            if "paper" in (printing.get("games") or []):
+                on_paper.add(card)
+            if printing.get("set_type") != "funny":
+                in_earnest.add(card)
             # And of the PAINTING, which is what is chosen between once a card is
             # found: Sol Ring is every rarity, and each of its paintings only some.
             # With the best printing of it AT each rarity, because the painting is
@@ -442,6 +502,16 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
     # every card that has been one.
     for card, seen_at in rarities.items():
         _put(cards[card], "ra", "".join(letter for letter, name in RARITIES if name in seen_at))
+    # Two things about a card that are only known once every printing has been
+    # seen, and that a random deal off the file needs: Momir hands a table a
+    # creature to put in front of somebody. A card nobody has printed on paper is
+    # not one of those ("dg"), and nor is one that is a joke ("fu"): every printing
+    # of it in a set made for laughs and no format that will have it. The second
+    # half is what keeps Unfinity's real cards, which sit in a funny set and are
+    # legal wherever cards that old are.
+    for card, row in enumerate(cards):
+        _put(row, "dg", card not in on_paper)
+        _put(row, "fu", card not in in_earnest and row["o"] not in playable)
     # A price is a printing's too, and the one worth knowing about a CARD is what
     # the cheapest copy of it costs.
     for card, price in cheapest.items():
@@ -467,18 +537,24 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
         {"k": card, "s": {code: sorted(pictures) for code, pictures in sorted(by_set.items())}}
         for card, by_set in sorted(membership.items())
     ]
+    oversized, oversized_art = oversized.tables()
     return {
         "sets": sorted(sets.values(), key=lambda s: (s.get("d", ""), s["c"])),
         "cards": cards,
         "art": art,
         "printings": printings,
         "packs": _packs(list(boosters), numbered, art_index, sets),
+        "oversized": oversized,
+        "oversized_art": oversized_art,
     }
 
 
 # What a healthy build looks like. Scryfall grows; it does not shrink. A count
 # under one of these is a failed download or a changed format, never fewer cards.
-MINIMUM = {"cards": 34_000, "art": 49_000, "sets": 650, "printings": 34_000, "packs": 150}
+MINIMUM = {
+    "cards": 34_000, "art": 49_000, "sets": 650, "printings": 34_000, "packs": 150,
+    "oversized": 290, "oversized_art": 300,
+}
 
 #: How far a count may fall from the last published build before it is refused.
 MAX_DROP = 0.01
@@ -536,7 +612,7 @@ def write(tables, out_dir, sources=None, now=None):
             gz.write(b"\n")
 
         line({"format": FORMAT})
-        for table in ("sets", "cards", "art", "printings", "packs"):
+        for table in ("sets", "cards", "art", "printings", "packs", "oversized", "oversized_art"):
             # The count comes BEFORE the rows, so a reader can tell a file that
             # stopped early from one that ended.
             line({"table": table, "rows": len(tables[table])})

@@ -22,6 +22,10 @@ including digital-only cards and Un-sets. A card with a face on each side
 each side is printed on its own. A card with two parts on one side (split,
 adventure, flip) is one row with its parts listed.
 
+Planes, phenomena and schemes are kept too, in two tables of their own after the
+rest: they are not cards anybody looks up, and the app deals them, off a planar
+deck and a scheme deck.
+
 ## The file
 
 `manifest.json` names the current data file and gives its SHA-256, its size and
@@ -54,6 +58,8 @@ a set that is itself in this table.
 | `ra` | every rarity the card has been printed at, as letters: `c` common, `u` uncommon, `r` rare, `m` mythic, `s` special, `b` bonus |
 | `y` | Scryfall layout |
 | `meld` | on a meld half: the oracle id of what it melds into |
+| `dg` | true for a card that has never been printed on paper |
+| `fu` | true for a joke card: every printing of it is in a set of type `funny` and no format will have it. Unfinity's eternal-legal cards are not |
 
 **art**, one per painting of each card:
 
@@ -94,7 +100,17 @@ booster there was before either.
 No card comes off one sheet twice in a pack. A foil and a non-foil copy of a
 printing are one entry with their weights added. What is not a card (tokens, art
 cards, sticker sheets) is not in a pack here. A reader that does not know this
-table can skip it: it comes last, and it announces its length like the others.
+table can skip it: it announces its length like the others.
+
+**oversized**, one per plane, phenomenon or scheme that has been printed on paper
+in English: `o` oracle id, `n` name, `t` type line, `x` rules text, and `y`, the
+Scryfall layout, which is `planar` or `scheme`.
+
+**oversized_art**, one per painting of each: `k` row in `oversized`, `i` Scryfall
+id of the printing the picture is taken from, `il` illustration id, `a` artist,
+`s` set code, `cn` collector number.
+
+A reader that does not know these two can skip them the same way: they come last.
 
 ## Credit
 
