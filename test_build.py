@@ -399,6 +399,28 @@ class Packs(unittest.TestCase):
         # A collector booster is nobody's draft pack, and is a pack of its own kind.
         self.assertEqual(["collector"], [p.get("k") for p in self.packs(named[:1])])
 
+    def test_a_pack_says_which_formats_it_is_of(self):
+        # In Modern and Legacy, and banned in one of them, which is still in it.
+        legal = {"standard": "not_legal", "pioneer": "not_legal", "modern": "legal", "legacy": "banned"}
+        cards = [bolt(rarity="common", legalities=legal)]
+        (pack,) = build.build(cards, cards, boosters=[booster()])["packs"]
+        self.assertEqual("ml", pack["f"])
+        # A card that is in nothing makes a pack of nothing, and the row says nothing.
+        (pack,) = self.packs([booster()])
+        self.assertNotIn("f", pack)
+
+    def test_a_pack_is_judged_by_its_own_sets_cards_and_not_its_guests(self):
+        modern = {"modern": "legal", "legacy": "legal"}
+        own = card("Own", collector_number="1", rarity="common", legalities=modern)
+        guests = [
+            card(f"Guest {n}", set="plst", collector_number=str(n), rarity="common", legalities={"legacy": "legal"})
+            for n in range(1, 4)
+        ]
+        sheet = {"common": {"cards": {"lea:1": 1, "plst:1": 1, "plst:2": 1, "plst:3": 1}}}
+        everything = [own] + guests
+        (pack,) = build.build(everything, everything, boosters=[booster(sheets=sheet)])["packs"]
+        self.assertEqual("ml", pack["f"])
+
     def test_a_sets_other_boosters_are_packs_of_their_own(self):
         named = [
             booster("lea-draft", name="D"), booster("lea-collector", name="C"), booster("lea-set", name="S"),

@@ -102,6 +102,7 @@ booster there was before either.
 | `v` | every make-up a pack can have, likeliest first, each `[weight, {sheet: how many}]` with the sheets in pack order |
 | `p` | the printings the sheets draw from, each `[row in cards, row in art, Scryfall id, set, collector number, rarity letter]`, with the `cards` and `art` rows of its other side after those where it has one |
 | `sh` | the sheets by name, each `{"c": [printing, weight, printing, weight, ...]}` with printings as positions in `p`, and `"b": 1` where a pack is collated with a card of each colour |
+| `f` | the formats the pack is of, as letters: `s` Standard, `p` Pioneer, `m` Modern, `l` Legacy. A pack is of a format when nine in ten of its set's own cards are in it, banned or not; the guests in a booster (The List, a bonus sheet) are not counted. Left out for a pack of none, like an Un-set's |
 
 No card comes off one sheet twice in a pack. A foil and a non-foil copy of a
 printing are one entry with their weights added. What is not a card (tokens, art

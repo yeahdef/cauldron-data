@@ -51,6 +51,15 @@ DRAFTED = ("-play", "-draft", "")
 #: six-card packs that file also has, which nobody would choose to open.
 OTHER_BOOSTERS = (("set", "-set"), ("collector", "-collector"), ("jumpstart", "-jumpstart"))
 
+#: The formats a pack can be said to belong to, for a draft kept to one of them: the
+#: letter a pack row carries, and what Scryfall calls the format. A pack is of a
+#: format when [PACK_FORMAT_SHARE] of its set's own cards may be played in it.
+PACK_FORMATS = (("s", "standard"), ("p", "pioneer"), ("m", "modern"), ("l", "legacy"))
+
+#: Not all of them, because a set has always had a card or two that is not: a
+#: Conspiracy's conspiracies are in no format, and the set is Legacy's all the same.
+PACK_FORMAT_SHARE = 0.9
+
 #: The fewest different cards a booster may draw from and still be a pack here. A
 #: Spellbook is eight cards in a box, and a "pack" of it is the box again. March of
 #: the Machine: The Aftermath, at fifty, is the smallest set that was really opened.
@@ -428,7 +437,7 @@ def _folders(listed, kept):
     return out
 
 
-def _packs(boosters, numbered, art_index, sets):
+def _packs(boosters, numbered, art_index, sets, formats=()):
     """One row per set that was sold in boosters: what a pack of it holds.
 
     [boosters] is taw's list, which names every card on every sheet as set and
@@ -446,6 +455,11 @@ def _packs(boosters, numbered, art_index, sets):
         sh  the sheets, each {"c": [printing, weight, printing, weight, ...]} with
             printings as positions in p, and "b" where the sheet is dealt with one
             card of each colour first
+        f   the formats the pack is of, as letters (see [PACK_FORMATS]), where it
+            is of any. [formats] is those letters for each row of cards: the
+            formats that card is in, banned or not. A pack is judged by the cards
+            of its OWN set, so that the guests in a Play Booster (The List, a
+            bonus sheet of old cards) do not take a Standard set out of Standard.
 
     A foil is the same card to a printer with no foil, so a sheet's foil and
     non-foil copies of a printing are one entry with their weights added. A card
@@ -519,6 +533,13 @@ def _packs(boosters, numbered, art_index, sets):
             }
             if kind:
                 row["k"] = kind
+            own = {entry[0] for entry in printings if entry[3] == code} or {entry[0] for entry in printings}
+            of = "".join(
+                letter for letter, _ in PACK_FORMATS
+                if formats and sum(letter in formats[card] for card in own) >= PACK_FORMAT_SHARE * len(own)
+            )
+            if of:
+                row["f"] = of
             out.append(row)
     return out
 
@@ -539,10 +560,15 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
 
     cards = []
     index = {}
+    # For each row of cards, the formats it is in. See [_packs].
+    formats = []
     for card in oracle_cards:
+        legalities = card.get("legalities") or {}
+        within = "".join(letter for letter, name in PACK_FORMATS if legalities.get(name, "not_legal") != "not_legal")
         for row in card_rows(card):
             index[(row["o"], row.get("f", 0))] = len(cards)
             cards.append(row)
+            formats.append(within)
     by_name = {row["n"]: row["o"] for row in cards if "f" not in row}
     for half, result in _meld_results(oracle_cards).items():
         for row in cards:
@@ -688,7 +714,7 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
         "cards": cards,
         "art": art,
         "printings": printings,
-        "packs": _packs(list(boosters), numbered, art_index, sets),
+        "packs": _packs(list(boosters), numbered, art_index, sets, formats),
         "oversized": oversized,
         "oversized_art": oversized_art,
         "tokens": tokens.table(),
