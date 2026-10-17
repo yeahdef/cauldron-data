@@ -628,6 +628,25 @@ class Tokens(unittest.TestCase):
         row = build.build([], [self.token("Wall", power="0", toughness="3")])["tokens"][0]
         self.assertEqual("0", row["power"])
 
+    def test_a_card_says_the_tokens_it_makes(self):
+        # As Voice of Resurgence: itself, then the Elemental it makes, by one printing.
+        elemental = self.token("Elemental", id="p-elemental", oracle_id="o-elemental")
+        incubator = self.token(
+            "Incubator // Phyrexian", id="p-incubator", oracle_id=None, layout="double_faced_token",
+            card_faces=[{"name": "Incubator"}, {"name": "Phyrexian"}],
+        )
+        voice = card("Voice of Resurgence", "o-voice", all_parts=[
+            {"component": "combo_piece", "id": "p-Voice of Resurgence", "name": "Voice of Resurgence"},
+            {"component": "token", "id": "p-elemental", "name": "Elemental"},
+            {"component": "token", "id": "p-incubator", "name": "Incubator // Phyrexian"},
+            {"component": "token", "id": "p-unknown", "name": "Nothing kept"},
+        ])
+        bolt_card = bolt()
+        tables = build.build([voice, bolt_card], [voice, bolt_card, elemental, incubator])
+        rows = {row["n"]: row for row in tables["cards"]}
+        self.assertEqual([["o-elemental", "Elemental"], ["", "Incubator // Phyrexian"]], rows["Voice of Resurgence"]["tk"])
+        self.assertNotIn("tk", rows["Lightning Bolt"])
+
     def test_a_token_is_not_a_card(self):
         tables = build.build([self.token()], [self.token()])
         self.assertEqual([], tables["cards"])

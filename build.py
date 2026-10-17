@@ -191,6 +191,21 @@ def _meld_results(cards):
     return out
 
 
+def _made(card, objects):
+    """What [card] puts into a game that the app keeps with its tokens, in Scryfall's
+    order: `[oracle id, name]` for each token, emblem or dungeon among its
+    `all_parts` that [objects] (every token printing, by id) knows. Itself and the
+    real cards it mentions are not; a double-faced token has no oracle id of its
+    own, and goes by its name with "" for one."""
+    out = []
+    for part in card.get("all_parts") or []:
+        made = objects.get(part.get("id"))
+        if made is None or made[0] == card.get("oracle_id") or made in out:
+            continue
+        out.append(made)
+    return out
+
+
 def face_keys(printing):
     """Which card rows a printing shows, as (oracle id, face, side, source).
 
@@ -354,10 +369,14 @@ class _Tokens:
 
     def __init__(self):
         self.best = {}
+        self.objects = {}
 
     def add(self, printing):
         if not is_token(printing):
             return
+        # What it is, by the id of any printing of it: for the tokens a card makes,
+        # which Scryfall names by one printing each. See [_made].
+        self.objects[printing["id"]] = [printing.get("oracle_id") or "", printing.get("name", "")]
         faces = printing.get("card_faces") or []
         picture = tuple(
             [printing.get("illustration_id") or ""] + [face.get("illustration_id") or "" for face in faces]
@@ -681,6 +700,11 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
     for card, row in enumerate(cards):
         _put(row, "dg", card not in on_paper)
         _put(row, "fu", card not in in_earnest and row["o"] not in playable)
+    # The tokens each card makes, on every row of it: a creature that makes one
+    # when it dies may be the back of a card as well as the front. See [_made].
+    made = {card["oracle_id"]: _made(card, tokens.objects) for card in oracle_cards}
+    for row in cards:
+        _put(row, "tk", made.get(row["o"]))
     # A price is a printing's too, and the one worth knowing about a CARD is what
     # the cheapest copy of it costs.
     for card, price in cheapest.items():

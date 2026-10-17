@@ -61,6 +61,7 @@ a set that is itself in this table.
 | `ra` | every rarity the card has been printed at, as letters: `c` common, `u` uncommon, `r` rare, `m` mythic, `s` special, `b` bonus |
 | `y` | Scryfall layout |
 | `meld` | on a meld half: the oracle id of what it melds into |
+| `tk` | what the card makes that is kept with the tokens, from Scryfall's `all_parts`: each token, emblem or dungeon as `[oracle id, name]`, the oracle id `""` for a double-faced token, which has none of its own and goes by its name |
 | `kw` | Scryfall's keywords for the card: `["Flying", "Squad"]` |
 | `dg` | true for a card that has never been printed on paper |
 | `fu` | true for a joke card: every printing of it is in a set of type `funny` and no format will have it. Unfinity's eternal-legal cards are not |
