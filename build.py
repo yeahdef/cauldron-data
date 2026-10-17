@@ -21,6 +21,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -39,6 +40,14 @@ SETS_INDEX = "https://api.scryfall.com/sets"
 #: taw's magic-search-engine, published as data, and what MTGJSON's own booster
 #: tables are made from. Scryfall says a card's rarity and nothing about packs.
 BOOSTERS = "https://raw.githubusercontent.com/taw/magic-sealed-data/master/sealed_basic_data.json"
+
+#: Scryfall's lists of Magic's keywords, for the glossary: see [glossary].
+CATALOGS = {"a": "keyword-abilities", "x": "keyword-actions"}
+CATALOG_URL = "https://api.scryfall.com/catalog/{}"
+
+#: What a person has written for the glossary, by keyword: the text to show, or
+#: null to leave the keyword out. Read where no card's reminder will do.
+WRITTEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "glossary_written.json")
 
 #: The booster a set is drafted from, by what that file calls it: a Play Booster
 #: where there is one, the Draft Booster before those, and the only booster there
@@ -204,6 +213,87 @@ def _made(card, objects):
             continue
         out.append(made)
     return out
+
+
+def _reminders(card, keyword, loose=False):
+    """Each reminder text [card] gives [keyword], with its number or cost as N: the
+    parenthesis straight after the keyword and whatever it takes (Ward {2}, Afflict
+    2, Equip {1}{W}), on the same line."""
+    texts = [card.get("oracle_text") or ""] + [face.get("oracle_text") or "" for face in card.get("card_faces") or []]
+    found = []
+    # The keyword as a word anywhere, in any of its forms ("mills", "fights",
+    # "explored"), then what it takes, then the parenthesis. What it takes may be
+    # a number, a word for one, or a cost, and a few words after ("three cards").
+    #
+    # Strictly first: the keyword at the start of a line or clause, as a keyword
+    # line is printed. [loose] is for the ones nothing strict finds, which are the
+    # actions used mid-sentence. "Gift a Food" is the gift's, not the Food's.
+    start = r"(?:^|(?<=\n)|(?<=[.;,] ))" if not loose else r"(?<!Gift a )(?<!Gift an )\b"
+    pattern = re.compile(
+        r"(?i)" + start + re.escape(keyword) + r"(?:s|es|ed|d)?\b([^(\n.]{0,40}?)[.]?\s*\(([^()]+)\)"
+    )
+    for text in texts:
+        for match in pattern.finditer(text):
+            taken, reminder = match.group(1).strip(" \u2014-:"), match.group(2).strip()
+            number = re.match(r"(?i)^(\{[^}]+\}(?:\{[^}]+\})*|(?:\d+|x|" + "|".join(NUMBER_WORDS) + r")\b)", taken)
+            rest = taken[number.end():].strip() if number else taken
+            # Another word before the parenthesis is another keyword's or a sentence:
+            # "Flying, vigilance (...)" says nothing of flying alone. A cost spelled
+            # out ("Pay 3 life") and a few words of what is counted are its own.
+            if re.search(r"[a-z]{3,}", rest, re.I) and not (
+                rest.lower().startswith(("pay", "discard", "sacrifice", "exile", "return", "tap", "remove", "put"))
+                or re.fullmatch(r"(?i)(cards?|counters?|times|life|\+1/\+1 counters?|target \w+)", rest)
+            ):
+                continue
+            if number:
+                said = number.group(1)
+                reminder = re.sub(r"(?i)(?<![\w{])" + re.escape(said) + r"(?![\w}])", "N", reminder)
+            found.append(reminder)
+    return found
+
+
+#: Numbers as cards spell them, for reading "mill three cards" as "mill N cards".
+NUMBER_WORDS = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "a", "an")
+
+
+def glossary(oracle_cards, catalogs, written=None):
+    """Magic's keyword abilities and keyword actions, each with the reminder text
+    the cards give it most often, for looking one up in the middle of a game.
+
+    One row each: `n` the name, `k` "a" for a keyword ability and "x" for an
+    action, `t` the text, and `c` how many cards have it. `t` is left out where no
+    card gives a reminder and nobody has written one: the app shows those as it
+    likes. [written] maps a name to the text to use instead, or None to leave it
+    out of the glossary altogether."""
+    written = written or {}
+    by_keyword = {}
+    counts = {}
+    for card in oracle_cards:
+        for keyword in card.get("keywords") or []:
+            counts[keyword.lower()] = counts.get(keyword.lower(), 0) + 1
+            by_keyword.setdefault(keyword.lower(), []).append(card)
+    rows = []
+    for kind, names in catalogs.items():
+        for name in names:
+            if name in written and written[name] is None:
+                continue
+            row = {"n": name, "k": kind}
+            if written.get(name):
+                row["t"] = written[name]
+            else:
+                tally = {}
+                for loose in (False, True):
+                    for card in by_keyword.get(name.lower(), []):
+                        for reminder in _reminders(card, name, loose):
+                            tally[reminder] = tally.get(reminder, 0) + 1
+                    if tally:
+                        break
+                if tally:
+                    row["t"] = max(tally, key=lambda text: (tally[text], -len(text)))
+            _put(row, "c", counts.get(name.lower()))
+            rows.append(row)
+    rows.sort(key=lambda row: row["n"].lower())
+    return rows
 
 
 def face_keys(printing):
@@ -563,7 +653,7 @@ def _packs(boosters, numbered, art_index, sets, formats=()):
     return out
 
 
-def build(oracle_cards, default_cards, set_list=(), boosters=()):
+def build(oracle_cards, default_cards, set_list=(), boosters=(), catalogs=None, written=None):
     """The seven tables. Each source is any iterable of dicts; [set_list] is Scryfall's
     list of sets and [boosters] is taw's list of what is in each booster."""
     set_list = list(set_list)
@@ -742,6 +832,7 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
         "oversized": oversized,
         "oversized_art": oversized_art,
         "tokens": tokens.table(),
+        "glossary": glossary(oracle_cards, catalogs or {}, written),
     }
 
 
@@ -749,7 +840,7 @@ def build(oracle_cards, default_cards, set_list=(), boosters=()):
 # under one of these is a failed download or a changed format, never fewer cards.
 MINIMUM = {
     "cards": 34_000, "art": 49_000, "sets": 650, "printings": 34_000, "packs": 150,
-    "oversized": 290, "oversized_art": 300, "tokens": 1_700,
+    "oversized": 290, "oversized_art": 300, "tokens": 1_700, "glossary": 250,
 }
 
 #: How far a count may fall from the last published build before it is refused.
@@ -808,7 +899,7 @@ def write(tables, out_dir, sources=None, now=None):
             gz.write(b"\n")
 
         line({"format": FORMAT})
-        for table in ("sets", "cards", "art", "printings", "packs", "oversized", "oversized_art", "tokens"):
+        for table in ("sets", "cards", "art", "printings", "packs", "oversized", "oversized_art", "tokens", "glossary"):
             # The count comes BEFORE the rows, so a reader can tell a file that
             # stopped early from one that ended.
             line({"table": table, "rows": len(tables[table])})
@@ -880,6 +971,23 @@ def download_sets():
     return listed
 
 
+def download_catalogs():
+    """Scryfall's keyword lists, fetched fresh. See [CATALOGS]."""
+    out = {}
+    for kind, name in CATALOGS.items():
+        with _get(CATALOG_URL.format(name)) as response:
+            out[kind] = json.load(response)["data"]
+    return out
+
+
+def read_written(path=WRITTEN):
+    """What a person has written for the glossary. See [WRITTEN]."""
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def download_boosters():
     """What is in each booster, fetched fresh. See [BOOSTERS]."""
     with _get(BOOSTERS) as response:
@@ -895,6 +1003,7 @@ def main(argv=None):
         parser.add_argument(f"--{source.replace('_', '-')}", help="a local .jsonl.gz to use instead of downloading")
     parser.add_argument("--sets", help="a local copy of api.scryfall.com/sets to use instead of downloading")
     parser.add_argument("--boosters", help="a local copy of taw's sealed_basic_data.json to use instead of downloading")
+    parser.add_argument("--catalogs", help="a local JSON of {kind: [names]} to use instead of Scryfall's keyword lists")
     args = parser.parse_args(argv)
 
     local = {source: getattr(args, source) for source in SOURCES}
@@ -922,7 +1031,16 @@ def main(argv=None):
     else:
         boosters = download_boosters()
 
-    tables = build(*(read_jsonl(paths[source]) for source in SOURCES), set_list=set_list, boosters=boosters)
+    if args.catalogs:
+        with open(args.catalogs, encoding="utf-8") as f:
+            catalogs = json.load(f)
+    else:
+        catalogs = download_catalogs()
+
+    tables = build(
+        *(read_jsonl(paths[source]) for source in SOURCES),
+        set_list=set_list, boosters=boosters, catalogs=catalogs, written=read_written(),
+    )
     try:
         check(tables, previous)
     except BuildError as error:

@@ -128,7 +128,15 @@ image_uris`. A picture is one row whatever it is a picture of, as Scryfall's
 search for unique art counts it; of the printings that share it the row is the
 oldest good scan. A token with no illustration id is one row for itself.
 
-A reader that does not know these three can skip them the same way: they come last.
+**glossary**, one per keyword ability and keyword action on Scryfall's lists of
+them (ability words, which have no rules meaning, are not): `n` the name, `k` `a`
+for an ability and `x` for an action, `t` the reminder text, and `c` how many cards
+have it. The text is the parenthesised reminder printed after the keyword on the
+most cards, with a number or cost it takes written N ("Ward N"); where none is
+printed, or the one printed is wrong, it is what `glossary_written.json` says, which
+is also where a keyword is left out (null). `t` is left out where there is neither.
+
+A reader that does not know these four can skip them the same way: they come last.
 
 ## Credit
 

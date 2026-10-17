@@ -510,7 +510,7 @@ class TheFile(unittest.TestCase):
             lines = self.read(folder, manifest)
         self.assertEqual({"format": build.FORMAT}, lines[0])
         at = 1
-        for table in ("sets", "cards", "art", "printings", "packs", "oversized", "oversized_art", "tokens"):
+        for table in ("sets", "cards", "art", "printings", "packs", "oversized", "oversized_art", "tokens", "glossary"):
             self.assertEqual({"table": table, "rows": len(built[table])}, lines[at])
             self.assertEqual(built[table], lines[at + 1:at + 1 + len(built[table])])
             at += 1 + len(built[table])
@@ -597,7 +597,7 @@ class OversizedAndMomir(unittest.TestCase):
             manifest = build.write(tables, out)
             with gzip.open(os.path.join(out, manifest["file"]), "rt", encoding="utf-8") as f:
                 headers = [json.loads(line)["table"] for line in f if line.startswith('{"table"')]
-        self.assertEqual(["sets", "cards", "art", "printings", "packs", "oversized", "oversized_art", "tokens"], headers)
+        self.assertEqual(["sets", "cards", "art", "printings", "packs", "oversized", "oversized_art", "tokens", "glossary"], headers)
         self.assertEqual(1, manifest["counts"]["oversized"])
 
 
@@ -744,3 +744,35 @@ class Tokens(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Glossary(unittest.TestCase):
+    def test_a_keyword_gets_the_reminder_its_cards_give_most(self):
+        lions = [
+            card(f"Lion {i}", oracle_text="Lifelink (Damage dealt by this creature also causes you to gain that much life.)", keywords=["Lifelink"])
+            for i in range(3)
+        ]
+        odd = card("Odd Lion", oracle_text="Lifelink (Something else.)", keywords=["Lifelink"])
+        rows = build.glossary(lions + [odd], {"a": ["Lifelink"]})
+        self.assertEqual([{"n": "Lifelink", "k": "a", "t": "Damage dealt by this creature also causes you to gain that much life.", "c": 4}], rows)
+
+    def test_a_number_or_cost_after_the_keyword_is_n(self):
+        warded = [
+            card("Warded Two", oracle_text="Ward {2} (Whenever this creature becomes the target of a spell or ability an opponent controls, counter it unless that player pays {2}.)", keywords=["Ward"]),
+            card("Warded Three", oracle_text="Flying\nWard {3} (Whenever this creature becomes the target of a spell or ability an opponent controls, counter it unless that player pays {3}.)", keywords=["Flying", "Ward"]),
+            card("Afflicted", oracle_text="Afflict 2 (Whenever this creature becomes blocked, defending player loses 2 life.)", keywords=["Afflict"]),
+        ]
+        rows = {row["n"]: row for row in build.glossary(warded, {"a": ["Ward", "Afflict", "Flying"]})}
+        self.assertEqual("Whenever this creature becomes the target of a spell or ability an opponent controls, counter it unless that player pays N.", rows["Ward"]["t"])
+        self.assertEqual("Whenever this creature becomes blocked, defending player loses N life.", rows["Afflict"]["t"])
+        # No reminder on any card: listed, with no text, for somebody to write one.
+        self.assertNotIn("t", rows["Flying"])
+
+    def test_a_reminder_after_two_keywords_is_neither_ones(self):
+        both = card("Both", oracle_text="Flying, vigilance (Something about both.)", keywords=["Flying", "Vigilance"])
+        rows = {row["n"]: row for row in build.glossary([both], {"a": ["Flying", "Vigilance"]})}
+        self.assertNotIn("t", rows["Flying"])
+
+    def test_what_a_person_wrote_wins_and_null_leaves_it_out(self):
+        rows = build.glossary([], {"a": ["Flying", "Banding"], "x": ["Scry"]}, written={"Flying": "It flies.", "Banding": None})
+        self.assertEqual([{"n": "Flying", "k": "a", "t": "It flies."}, {"n": "Scry", "k": "x"}], rows)
